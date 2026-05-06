@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Diagnostics;
 using System.Threading;
@@ -80,8 +81,14 @@ internal class CompanionManager
     {
         if (string.IsNullOrWhiteSpace(transcript)) return;
 
-        // Phase 07 will provide real screenshots
-        IReadOnlyList<ClaudeImageAttachment>? screenshots = null;
+        // Capture all monitors
+        var capturedScreens = await ScreenCaptureUtility.CaptureAllScreensAsync();
+        
+        var screenshots = capturedScreens.Select(screen =>
+            new ClaudeImageAttachment(
+                Base64Data: Convert.ToBase64String(screen.JpegBytes),
+                MediaType: "image/jpeg"
+            )).ToList();
 
         var fullResponseBuilder = new StringBuilder();
 
