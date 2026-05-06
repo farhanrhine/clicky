@@ -19,6 +19,7 @@ internal class CompanionManager
     private readonly ITranscriptionProvider _transcriptionProvider
         = new AssemblyAIStreamingProvider();
     private ITranscriptionSession? _activeTranscriptionSession;
+    private readonly TtsAudioPlayer _ttsPlayer = new();
     private readonly List<ClaudeConversationMessage> _conversationHistory = new();
     private CancellationTokenSource? _activeClaudeCancellationToken;
 
@@ -26,6 +27,7 @@ internal class CompanionManager
     {
         _hotkeyMonitor.OnShortcutTransition += HandleShortcutTransition;
         _hotkeyMonitor.Start();
+        _ttsPlayer.OnPlaybackCompleted += OnTtsPlaybackCompleted;
         System.Diagnostics.Debug.WriteLine("Clicky: CompanionManager started");
     }
 
@@ -34,6 +36,7 @@ internal class CompanionManager
         _hotkeyMonitor.Dispose();
         _pushToTalkManager.Dispose();
         _activeTranscriptionSession?.Dispose();
+        _ttsPlayer.Dispose();
     }
 
     private async void HandleShortcutTransition(PushToTalkTransition transition)
@@ -43,9 +46,10 @@ internal class CompanionManager
             case PushToTalkTransition.Pressed:
                 System.Diagnostics.Debug.WriteLine("Clicky: PTT pressed");
                 
-                // Cancel any existing session
+                // Cancel any existing session and stop TTS
                 _activeTranscriptionSession?.Cancel();
                 _activeTranscriptionSession?.Dispose();
+                _ttsPlayer.StopPlayback();
 
                 try
                 {
@@ -111,7 +115,19 @@ internal class CompanionManager
             if (pointTag != null)
                 Debug.WriteLine($"Point tag: {pointTag}");
 
-            // Phase 06+ will play TTS here
+            // Play TTS (don't await — let it play in background while overlay shows text)
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _ttsPlayer.SpeakAsync(displayText, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"TTS failed: {ex.Message}");
+                }
+            });
+
             // Phase 09+ will display text in overlay here
             // Phase 10+ will animate cursor to point tag here
         }
@@ -123,6 +139,12 @@ internal class CompanionManager
         {
             Debug.WriteLine($"Claude API error: {ex.Message}");
         }
+    }
+
+    private void OnTtsPlaybackCompleted()
+    {
+        Debug.WriteLine("TTS: playback complete");
+        // Phase 10+ will schedule cursor fade-out here
     }
 
     private static IReadOnlyList<string> BuildKeyterms() => new[]
