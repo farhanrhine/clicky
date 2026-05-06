@@ -8,6 +8,7 @@ namespace ClickyWindows;
 internal class CompanionManager
 {
     private readonly GlobalHotkeyMonitor _hotkeyMonitor = new();
+    private readonly PushToTalkManager _pushToTalkManager = new();
 
     public void Start()
     {
@@ -19,6 +20,7 @@ internal class CompanionManager
     public void Stop()
     {
         _hotkeyMonitor.Dispose();
+        _pushToTalkManager.Dispose();
     }
 
     private void HandleShortcutTransition(PushToTalkTransition transition)
@@ -27,12 +29,20 @@ internal class CompanionManager
         {
             case PushToTalkTransition.Pressed:
                 System.Diagnostics.Debug.WriteLine("Clicky: PTT pressed");
-                // Phase 03+ will start microphone capture here
+                _pushToTalkManager.StartCapture(OnAudioChunkCaptured);
                 break;
             case PushToTalkTransition.Released:
                 System.Diagnostics.Debug.WriteLine("Clicky: PTT released");
-                // Phase 03+ will stop mic and finalize transcript here
+                _pushToTalkManager.StopCapture();
+                // Phase 04+ will finalize transcript here
                 break;
         }
+    }
+
+    private void OnAudioChunkCaptured(byte[] pcm16AudioChunk)
+    {
+        // Phase 04+ will forward these chunks to AssemblyAI WebSocket
+        System.Diagnostics.Debug.WriteLine(
+            $"Clicky: audio chunk {pcm16AudioChunk.Length} bytes");
     }
 }

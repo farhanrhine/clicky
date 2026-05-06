@@ -27,10 +27,6 @@ internal class TrayIconManager
             ToolTipText = "Clicky"
         };
 
-        _taskbarIcon.TrayMouseDoubleClick += OnTrayIconClicked;
-        _taskbarIcon.LeftClickCommand =
-            new RelayCommand(() => OnTrayIconClicked(null, null));
-
         _taskbarIcon.ForceCreate(enablesRichTooltips: false);
     }
 

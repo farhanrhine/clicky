@@ -1,354 +1,174 @@
-# Clicky - Agent Instructions
+# Clicky — Agent Instructions
 
-<!-- This is the single source of truth for all AI coding agents. CLAUDE.md is a symlink to this file. -->
-<!-- AGENTS.md spec: https://github.com/agentsmd/agents.md — supported by Claude Code, Cursor, Copilot, Gemini CLI, and others. -->
+<!-- Single source of truth. CLAUDE.md is a symlink to this file. -->
 
-## Overview
+## What Is Clicky
 
-macOS menu bar companion app. Lives entirely in the macOS status bar (no dock icon, no main window). Clicking the menu bar icon opens a custom floating panel with companion voice controls. Uses push-to-talk (ctrl+option) to capture voice input, transcribes it via AssemblyAI streaming, and sends the transcript + a screenshot of the user's screen to Claude. Claude responds with text (streamed via SSE) and voice (ElevenLabs TTS). A blue cursor overlay can fly to and point at UI elements Claude references on any connected monitor.
+macOS menu bar AI companion (Swift/SwiftUI). Windows 11 port lives at `clicky-windows/` (C#/.NET 8/WinUI 3). Both share the same Cloudflare Worker backend at `worker/`. **Never modify macOS files when working on Windows, and vice versa.**
 
-All API keys live on a Cloudflare Worker proxy — nothing sensitive ships in the app.
+---
 
-## Architecture
+## ⚠️ ABSOLUTE RULES — Never Violate
 
-- **App Type**: Menu bar-only (`LSUIElement=true`), no dock icon or main window
-- **Framework**: SwiftUI (macOS native) with AppKit bridging for menu bar panel and cursor overlay
-- **Pattern**: MVVM with `@StateObject` / `@Published` state management
-- **AI Chat**: Claude (Sonnet 4.6 default, Opus 4.6 optional) via Cloudflare Worker proxy with SSE streaming
-- **Speech-to-Text**: AssemblyAI real-time streaming (`u3-rt-pro` model) via websocket, with OpenAI and Apple Speech as fallbacks
-- **Text-to-Speech**: ElevenLabs (`eleven_flash_v2_5` model) via Cloudflare Worker proxy
-- **Screen Capture**: ScreenCaptureKit (macOS 14.2+), multi-monitor support
-- **Voice Input**: Push-to-talk via `AVAudioEngine` + pluggable transcription-provider layer. System-wide keyboard shortcut via listen-only CGEvent tap.
-- **Element Pointing**: Claude embeds `[POINT:x,y:label:screenN]` tags in responses. The overlay parses these, maps coordinates to the correct monitor, and animates the blue cursor along a bezier arc to the target.
-- **Concurrency**: `@MainActor` isolation, async/await throughout
-- **Analytics**: PostHog via `ClickyAnalytics.swift`
+1. **No `xcodebuild`** — invalidates macOS TCC permissions (screen recording, accessibility)
+2. **No `dotnet` CLI** (`build`, `run`, `publish`, `restore`) — unreliable for WinUI 3; always let the user build from Visual Studio 2022
+3. **No scope creep** — only modify files listed in the current phase spec. Never "heroically" fix warnings or errors in previous-phase files
+4. **No skipping merges** — never start a new phase branch until the previous PR is merged to `main` and synced locally
+5. **Read the ENTIRE phase spec** — especially the bottom UI and Verification Checklist sections before writing any code
+6. **No new features** — implement exactly what the spec says, nothing more
 
-### API Proxy (Cloudflare Worker)
+---
 
-The app never calls external APIs directly. All requests go through a Cloudflare Worker (`worker/src/index.ts`) that holds the real API keys as secrets.
+## Mandatory Context Init (Every Session / Every Phase)
 
-| Route | Upstream | Purpose |
-|-------|----------|---------|
-| `POST /chat` | `api.anthropic.com/v1/messages` | Claude vision + streaming chat |
-| `POST /tts` | `api.elevenlabs.io/v1/text-to-speech/{voiceId}` | ElevenLabs TTS audio |
-| `POST /transcribe-token` | `streaming.assemblyai.com/v3/token` | Fetches a short-lived (480s) AssemblyAI websocket token |
+Read in this order before writing any code:
 
-Worker secrets: `ANTHROPIC_API_KEY`, `ASSEMBLYAI_API_KEY`, `ELEVENLABS_API_KEY`
-Worker vars: `ELEVENLABS_VOICE_ID`
+1. `AGENTS.md` (this file)
+2. `docs/specs/implementation_plan.md`
+3. `docs/specs/index.md`
+4. Target phase spec (e.g. `docs/specs/phase-03-*.md`) — read **all of it**
 
-### Key Architecture Decisions
+---
 
-**Menu Bar Panel Pattern**: The companion panel uses `NSStatusItem` for the menu bar icon and a custom borderless `NSPanel` for the floating control panel. This gives full control over appearance (dark, rounded corners, custom shadow) and avoids the standard macOS menu/popover chrome. The panel is non-activating so it doesn't steal focus. A global event monitor auto-dismisses it on outside clicks.
-
-**Cursor Overlay**: A full-screen transparent `NSPanel` hosts the blue cursor companion. It's non-activating, joins all Spaces, and never steals focus. The cursor position, response text, waveform, and pointing animations all render in this overlay via SwiftUI through `NSHostingView`.
-
-**Global Push-To-Talk Shortcut**: Background push-to-talk uses a listen-only `CGEvent` tap instead of an AppKit global monitor so modifier-based shortcuts like `ctrl + option` are detected more reliably while the app is running in the background.
-
-**Shared URLSession for AssemblyAI**: A single long-lived `URLSession` is shared across all AssemblyAI streaming sessions (owned by the provider, not the session). Creating and invalidating a URLSession per session corrupts the OS connection pool and causes "Socket is not connected" errors after a few rapid reconnections.
-
-**Transient Cursor Mode**: When "Show Clicky" is off, pressing the hotkey fades in the cursor overlay for the duration of the interaction (recording → response → TTS → optional pointing), then fades it out automatically after 1 second of inactivity.
-
-## Key Files
-
-| File | Lines | Purpose |
-|------|-------|---------|
-| `leanring_buddyApp.swift` | ~89 | Menu bar app entry point. Uses `@NSApplicationDelegateAdaptor` with `CompanionAppDelegate` which creates `MenuBarPanelManager` and starts `CompanionManager`. No main window — the app lives entirely in the status bar. |
-| `CompanionManager.swift` | ~1026 | Central state machine. Owns dictation, shortcut monitoring, screen capture, Claude API, ElevenLabs TTS, and overlay management. Tracks voice state (idle/listening/processing/responding), conversation history, model selection, and cursor visibility. Coordinates the full push-to-talk → screenshot → Claude → TTS → pointing pipeline. |
-| `MenuBarPanelManager.swift` | ~243 | NSStatusItem + custom NSPanel lifecycle. Creates the menu bar icon, manages the floating companion panel (show/hide/position), installs click-outside-to-dismiss monitor. |
-| `CompanionPanelView.swift` | ~761 | SwiftUI panel content for the menu bar dropdown. Shows companion status, push-to-talk instructions, model picker (Sonnet/Opus), permissions UI, DM feedback button, and quit button. Dark aesthetic using `DS` design system. |
-| `OverlayWindow.swift` | ~881 | Full-screen transparent overlay hosting the blue cursor, response text, waveform, and spinner. Handles cursor animation, element pointing with bezier arcs, multi-monitor coordinate mapping, and fade-out transitions. |
-| `CompanionResponseOverlay.swift` | ~217 | SwiftUI view for the response text bubble and waveform displayed next to the cursor in the overlay. |
-| `CompanionScreenCaptureUtility.swift` | ~132 | Multi-monitor screenshot capture using ScreenCaptureKit. Returns labeled image data for each connected display. |
-| `BuddyDictationManager.swift` | ~866 | Push-to-talk voice pipeline. Handles microphone capture via `AVAudioEngine`, provider-aware permission checks, keyboard/button dictation sessions, transcript finalization, shortcut parsing, contextual keyterms, and live audio-level reporting for waveform feedback. |
-| `BuddyTranscriptionProvider.swift` | ~100 | Protocol surface and provider factory for voice transcription backends. Resolves provider based on `VoiceTranscriptionProvider` in Info.plist — AssemblyAI, OpenAI, or Apple Speech. |
-| `AssemblyAIStreamingTranscriptionProvider.swift` | ~478 | Streaming transcription provider. Fetches temp tokens from the Cloudflare Worker, opens an AssemblyAI v3 websocket, streams PCM16 audio, tracks turn-based transcripts, and delivers finalized text on key-up. Shares a single URLSession across all sessions. |
-| `OpenAIAudioTranscriptionProvider.swift` | ~317 | Upload-based transcription provider. Buffers push-to-talk audio locally, uploads as WAV on release, returns finalized transcript. |
-| `AppleSpeechTranscriptionProvider.swift` | ~147 | Local fallback transcription provider backed by Apple's Speech framework. |
-| `BuddyAudioConversionSupport.swift` | ~108 | Audio conversion helpers. Converts live mic buffers to PCM16 mono audio and builds WAV payloads for upload-based providers. |
-| `GlobalPushToTalkShortcutMonitor.swift` | ~132 | System-wide push-to-talk monitor. Owns the listen-only `CGEvent` tap and publishes press/release transitions. |
-| `ClaudeAPI.swift` | ~291 | Claude vision API client with streaming (SSE) and non-streaming modes. TLS warmup optimization, image MIME detection, conversation history support. |
-| `OpenAIAPI.swift` | ~142 | OpenAI GPT vision API client. |
-| `ElevenLabsTTSClient.swift` | ~81 | ElevenLabs TTS client. Sends text to the Worker proxy, plays back audio via `AVAudioPlayer`. Exposes `isPlaying` for transient cursor scheduling. |
-| `ElementLocationDetector.swift` | ~335 | Detects UI element locations in screenshots for cursor pointing. |
-| `DesignSystem.swift` | ~880 | Design system tokens — colors, corner radii, shared styles. All UI references `DS.Colors`, `DS.CornerRadius`, etc. |
-| `ClickyAnalytics.swift` | ~121 | PostHog analytics integration for usage tracking. |
-| `WindowPositionManager.swift` | ~262 | Window placement logic, Screen Recording permission flow, and accessibility permission helpers. |
-| `AppBundleConfiguration.swift` | ~28 | Runtime configuration reader for keys stored in the app bundle Info.plist. |
-| `worker/src/index.ts` | ~142 | Cloudflare Worker proxy. Three routes: `/chat` (Claude), `/tts` (ElevenLabs), `/transcribe-token` (AssemblyAI temp token). |
-
-## Build & Run
+## Finlo Git Workflow
 
 ```bash
-# Open in Xcode
-open leanring-buddy.xcodeproj
-
-# Select the leanring-buddy scheme, set signing team, Cmd+R to build and run
-
-# Known non-blocking warnings: Swift 6 concurrency warnings,
-# deprecated onChange warning in OverlayWindow.swift. Do NOT attempt to fix these.
-```
-
-**Do NOT run `xcodebuild` from the terminal** — it invalidates TCC (Transparency, Consent, and Control) permissions and the app will need to re-request screen recording, accessibility, etc.
-
-## Cloudflare Worker
-
-```bash
-cd worker
-npm install
-
-# ── Production secrets (paid APIs) ──────────────────────────────────────────
-npx wrangler secret put ANTHROPIC_API_KEY
-npx wrangler secret put ASSEMBLYAI_API_KEY
-npx wrangler secret put ELEVENLABS_API_KEY
-
-# ── Dev mode secrets (Groq — free tier) ─────────────────────────────────────
-npx wrangler secret put GROQ_API_KEY   # get from console.groq.com (free)
-
-# ── Toggle between dev and prod ──────────────────────────────────────────────
-npx wrangler secret put DEV_MODE       # type "true" → Groq, "false" → Claude etc.
-
-# Deploy
-npx wrangler deploy
-
-# Local dev — create worker/.dev.vars with all keys:
-npx wrangler dev
-```
-
-**`worker/.dev.vars`** (local only, never committed):
-```
-ANTHROPIC_API_KEY=sk-ant-...
-ASSEMBLYAI_API_KEY=...
-ELEVENLABS_API_KEY=...
-GROQ_API_KEY=gsk_...
-DEV_MODE=true
-```
-
-### Dev Mode (Groq Free Tier)
-
-Setting `DEV_MODE=true` in the Worker reroutes all three API calls through Groq.
-**Zero changes to the app** — the same Worker URL, same routes, same request format.
-
-| Route | Production (DEV_MODE=false) | Dev (DEV_MODE=true) |
-|---|---|---|
-| `POST /chat` | Anthropic Claude (paid) | Groq `llama-4-scout-17b-16e-instruct` (vision ✅) |
-| `POST /tts` | ElevenLabs (paid) | Groq `canopylabs/orpheus-v1-english` |
-| `POST /transcribe-token` | AssemblyAI temp token | Returns Groq API key directly |
-
-> **Note**: In dev mode, speech-to-text switches from AssemblyAI real-time streaming
-> to Groq Whisper **upload-based** (audio is buffered and uploaded on key release).
-> Partial live transcripts during hold are not shown — final transcript still works.
-
-## Code Style & Conventions
-
-### Variable and Method Naming
-
-IMPORTANT: Follow these naming rules strictly. Clarity is the top priority.
-
-- Be as clear and specific with variable and method names as possible
-- **Optimize for clarity over concision.** A developer with zero context on the codebase should immediately understand what a variable or method does just from reading its name
-- Use longer names when it improves clarity. Do NOT use single-character variable names
-- Example: use `originalQuestionLastAnsweredDate` instead of `originalAnswered`
-- When passing props or arguments to functions, keep the same names as the original variable. Do not shorten or abbreviate parameter names. If you have `currentCardData`, pass it as `currentCardData`, not `card` or `cardData`
-
-### Code Clarity
-
-- **Clear is better than clever.** Do not write functionality in fewer lines if it makes the code harder to understand
-- Write more lines of code if additional lines improve readability and comprehension
-- Make things so clear that someone with zero context would completely understand the variable names, method names, what things do, and why they exist
-- When a variable or method name alone cannot fully explain something, add a comment explaining what is happening and why
-
-### Swift/SwiftUI Conventions
-
-- Use SwiftUI for all UI unless a feature is only supported in AppKit (e.g., `NSPanel` for floating windows)
-- All UI state updates must be on `@MainActor`
-- Use async/await for all asynchronous operations
-- Comments should explain "why" not just "what", especially for non-obvious AppKit bridging
-- AppKit `NSPanel`/`NSWindow` bridged into SwiftUI via `NSHostingView`
-- All buttons must show a pointer cursor on hover
-- For any interactive element, explicitly think through its hover behavior (cursor, visual feedback, and whether hover should communicate clickability)
-
-### Do NOT
-
-- Do not add features, refactor code, or make "improvements" beyond what was asked
-- Do not add docstrings, comments, or type annotations to code you did not change
-- Do not try to fix the known non-blocking warnings (Swift 6 concurrency, deprecated onChange)
-- Do not rename the project directory or scheme (the "leanring" typo is intentional/legacy)
-- Do not run `xcodebuild` from the terminal — it invalidates TCC permissions
-- Do not start a new phase/feature branch until the previous one is MERGED to main and synced locally
-
-## Feature Branch Workflow (Finlo) — Never Forget!
-
-### ⚠️ MANDATORY RULE: No Skipping Merges
-You MUST NOT start a new phase or feature branch until the previous phase's branch has been successfully MERGED into `main` and you have synced locally. Failure to follow this sequence breaks the source of truth and is UNACCEPTABLE.
-
-**Complete step-by-step process for implementing a feature and merging to main:**
-
-```bash
-# 1️⃣ START: Pull latest from main
-git status
+# 1. Pull latest main
 git pull origin main
 
-# 2️⃣ CREATE: New feature branch (use step number + feature name)
+# 2. Create branch
 git checkout -b feature/<step_number>-<feature_name>
-# Example: git checkout -b feature/2-registration
 
-# 3️⃣ BUILD: Implement the feature
-# - Follow the spec from docs/specs/
-# - Test thoroughly before committing
-# - Build and run from Visual Studio or Xcode
+# 3. Implement — follow spec exactly, build/verify in Visual Studio or Xcode
 
-# 4️⃣ STAGE: Add all changes to git
+# 4. Commit (co-author required)
 git add .
+git commit -m $'Subject (Phase N)\n\n- Detail\n\nCo-Authored-By: Claude <claude@anthropic.com>'
 
-# 5️⃣ COMMIT: Commit with detailed message + Claude co-author
-git commit -m $'brief subject (Step X)\n\n- Detail 1\n- Detail 2\n- Detail 3\n\nCo-Authored-By: Claude <claude@anthropic.com>'
-
-# 6️⃣ PUSH: Push feature branch to GitHub
+# 5. Push + PR
 git push origin feature/<step_number>-<feature_name>
+# Open PR on GitHub → Merge → Delete remote branch
 
-# 7️⃣ CREATE: Pull request on GitHub (manual — creates merge request)
-
-# 8️⃣ MERGE: Merge PR on GitHub & delete remote branch
-
-# 9️⃣ SYNC: Switch back to main and clean up locally
-git checkout main
-git pull origin main
-git branch -D feature/<step_number>-<feature_name>  # Delete local branch
-
-# ✅ DONE: Ready for next feature
+# 6. Sync locally
+git checkout main && git pull origin main
+git branch -D feature/<step_number>-<feature_name>
 ```
 
 ---
 
-## Windows Port
+## Code Naming & Clarity
 
-The Windows 11 port of Clicky lives at `clicky-windows/` in this same repo.
-It is a **separate project** from the macOS app — different language, different
-framework, same Cloudflare Worker backend.
+- **Clarity over concision** — long descriptive names are required. `originalQuestionLastAnsweredDate` not `answered`
+- Pass arguments with the same name as the variable — never shorten or abbreviate
+- Comments explain **why**, not what
+- More lines = more readable: never sacrifice clarity for brevity
 
-### Windows Architecture
+---
 
-- **App Type**: System tray-only (`WS_EX_NOACTIVATE`), no main window, no taskbar entry
-- **Framework**: WinUI 3 (Windows App SDK 1.5) with Win32 P/Invoke for overlay and hotkey
-- **Pattern**: Event-driven with `CompanionManager` as the central state machine
-- **AI Chat**: Claude (Sonnet 4.6 default, Opus 4.6 optional) via same Cloudflare Worker — SSE streaming via `HttpClient`
-- **Speech-to-Text**: AssemblyAI real-time streaming (`u3-rt-pro` model) via `ClientWebSocket`
-- **Text-to-Speech**: ElevenLabs (`eleven_flash_v2_5`) via Worker proxy, played with NAudio. Falls back to Windows SAPI (`System.Speech`) if unavailable.
-- **Screen Capture**: `Windows.Graphics.Capture` — GPU-accelerated, multi-monitor
-- **Voice Input**: Push-to-talk via NAudio `WaveInEvent`. System-wide hotkey: **Ctrl+Alt** (equivalent of macOS Ctrl+Option). Detected via `RegisterHotKey` (press) + `SetWindowsHookEx` (release).
-- **Element Pointing**: Same `[POINT:x,y:label:screenN]` tag protocol as macOS. `PointTagParser.cs` extracts coordinates, `BezierFlightAnimator.cs` animates the cursor along a quadratic bezier arc.
-- **Concurrency**: `async`/`await` throughout, UI updates via `DispatcherQueue`
-- **Analytics**: PostHog .NET SDK — same event names as macOS so both platforms share one dashboard
+## macOS Conventions (leanring-buddy/)
 
-### Windows Key Files
+- SwiftUI for all UI; AppKit only where required (NSPanel, NSWindow)
+- `@MainActor` for all UI state updates; `async/await` throughout
+- All buttons must show pointer cursor on hover
+- Known non-blocking warnings (Swift 6 concurrency, deprecated `onChange`): **do not fix**
+- Do not rename the project directory — the "leanring" typo is intentional/legacy
 
-| File | Purpose |
-|------|---------|
-| `clicky-windows/ClickyWindows/Core/CompanionManager.cs` | Central state machine. Owns the full pipeline: hotkey → mic → ASR → screenshot → Claude → TTS → overlay → pointing. Port of `CompanionManager.swift`. |
-| `clicky-windows/ClickyWindows/Core/AppConfiguration.cs` | Cloudflare Worker URL + model defaults. **Set `CloudflareWorkerBaseUrl` here before building.** |
-| `clicky-windows/ClickyWindows/Core/CompanionVoiceState.cs` | `enum` with four states: `Idle`, `Listening`, `Processing`, `Responding`. |
-| `clicky-windows/ClickyWindows/Input/GlobalHotkeyMonitor.cs` | Win32 `RegisterHotKey` + `SetWindowsHookEx` for system-wide Ctrl+Alt detection. Port of `GlobalPushToTalkShortcutMonitor.swift`. |
-| `clicky-windows/ClickyWindows/Audio/PushToTalkManager.cs` | NAudio `WaveInEvent` mic capture → 16kHz PCM16 mono chunks. Port of `BuddyDictationManager.swift`'s audio section. |
-| `clicky-windows/ClickyWindows/Audio/PCM16AudioConverter.cs` | Resamples mic input to 16kHz PCM16 mono via `MediaFoundationResampler`. Port of `BuddyAudioConversionSupport.swift`. |
-| `clicky-windows/ClickyWindows/Audio/TtsAudioPlayer.cs` | Fetches MP3 from Worker `/tts`, plays via NAudio `WaveOutEvent`. Falls back to SAPI. Port of `ElevenLabsTTSClient.swift`. |
-| `clicky-windows/ClickyWindows/Transcription/AssemblyAIStreamingProvider.cs` | Fetches temp token from Worker, opens AssemblyAI v3 WebSocket, streams PCM16, delivers final transcript. Port of `AssemblyAIStreamingTranscriptionProvider.swift`. |
-| `clicky-windows/ClickyWindows/AI/ClaudeApiClient.cs` | POST to Worker `/chat`, reads SSE stream, yields text chunks. Port of `ClaudeAPI.swift`. |
-| `clicky-windows/ClickyWindows/AI/PointTagParser.cs` | Regex parser for `[POINT:x,y:label:screenN]` tags. Strips tags from display/TTS text. |
-| `clicky-windows/ClickyWindows/Screen/ScreenCaptureUtility.cs` | `Windows.Graphics.Capture` multi-monitor capture. Sorted cursor-screen-first. Port of `CompanionScreenCaptureUtility.swift`. |
-| `clicky-windows/ClickyWindows/Overlay/OverlayWindow.cs` | Full-screen transparent `WS_EX_TRANSPARENT \| WS_EX_LAYERED \| WS_EX_TOPMOST` WinUI 3 window. Port of `OverlayWindow.swift`. |
-| `clicky-windows/ClickyWindows/Overlay/BezierFlightAnimator.cs` | Quadratic bezier arc cursor flight at 60fps. Dwell at target, return flight. Port of the pointing animation in `OverlayWindow.swift`. |
-| `clicky-windows/ClickyWindows/Panel/TrayIconManager.cs` | `H.NotifyIcon.WinUI` tray icon + click handler. Port of `MenuBarPanelManager.swift`. |
-| `clicky-windows/ClickyWindows/Panel/CompanionPanelWindow.xaml` | Borderless dark floating panel. Shows status, hotkey hint, permissions, model picker, quit. Port of `CompanionPanelView.swift`. |
-| `clicky-windows/ClickyWindows/Styles/DesignSystem.cs` | Exact same color hex values and spacing as `DesignSystem.swift`. |
-| `clicky-windows/ClickyWindows/Analytics/ClickyAnalytics.cs` | PostHog .NET SDK wrapper. Same event names as `ClickyAnalytics.swift`. |
-| `clicky-windows/installer/clicky-setup.iss` | Inno Setup installer script for direct download distribution. |
+### macOS Build
+```bash
+open leanring-buddy.xcodeproj   # then Cmd+R in Xcode
+```
 
-### Windows Build & Run
+---
 
+## Windows Conventions (clicky-windows/)
+
+- WinUI 3 only — no WPF, WinForms, Electron
+- Target Windows 11 build 22000+ minimum; do not support Windows 10
+- All UI updates via `DispatcherQueue.TryEnqueue` when called from non-UI thread
+- `async`/`await` throughout; no `.Result` or `.Wait()` blocking calls
+- Win32 P/Invoke declarations go at the **bottom** of the class that uses them
+
+### Windows Build
 ```powershell
-# Open in Visual Studio 2022 (requires Windows App SDK workload)
+# Open in Visual Studio 2022 (Windows App SDK workload required)
 start clicky-windows\ClickyWindows.sln
+# Run: Ctrl+F5 in Visual Studio (Debug | x64)
 
-# Set the Worker URL first:
-# Edit clicky-windows\ClickyWindows\Core\AppConfiguration.cs
-# Set CloudflareWorkerBaseUrl to your deployed Worker URL
-
-# Run: press Ctrl+F5 in Visual Studio (Debug | x64)
-# The app appears in the system tray — no window.
+# Release: Right-click Project → Publish in Visual Studio
+# Installer: Open clicky-windows\installer\clicky-setup.iss → Build → Compile in Inno Setup
 ```
-
-**Do NOT use `dotnet run`** for the main app — it doesn't handle WinUI 3 packaging
-correctly. Always run from Visual Studio or a published build.
-
-```powershell
-# Build a self-contained release for distribution
-dotnet publish clicky-windows\ClickyWindows -c Release -r win-x64 --self-contained true
-
-# Then compile the installer in Inno Setup:
-# Open clicky-windows\installer\clicky-setup.iss → Build → Compile
-```
-
-### Mandatory Context Initialization (Per Phase)
-
-To maintain architectural consistency and follow the spec-driven roadmap while minimizing token usage, AI agents MUST read these files in order at the start of **every new session** or **every new phase**:
-
-1.  **AGENTS.md** (this file) — Core rules, architecture, and Finlo workflow
-2.  **docs/specs/implementation_plan.md** — High-level technical plan and tech stack
-3.  **docs/specs/index.md** — Phase roadmap and cross-platform API mapping
-4.  **Target Phase Spec** (e.g., `docs/specs/phase-02-*.md`) — Specific implementation details
-
-### Windows Spec Files
-
-```
-docs/specs/index.md              ← START HERE — overview, phase table, API cheat sheet
-docs/specs/phase-00-*.md         Phase 00: Project scaffolding
-docs/specs/phase-01-*.md         Phase 01: Tray + panel
-docs/specs/phase-02-*.md         Phase 02: Global hotkey
-docs/specs/phase-03-*.md         Phase 03: Microphone capture
-docs/specs/phase-04-*.md         Phase 04: AssemblyAI transcription
-docs/specs/phase-05-*.md         Phase 05: Claude API + SSE
-docs/specs/phase-06-*.md         Phase 06: ElevenLabs TTS
-docs/specs/phase-07-*.md         Phase 07: Screen capture
-docs/specs/phase-08-*.md         Phase 08: CompanionManager state machine
-docs/specs/phase-09-*.md         Phase 09: Overlay window + cursor
-docs/specs/phase-10-*.md         Phase 10: Bezier arc flight + pointing
-docs/specs/phase-11-*.md         Phase 11: Analytics, permissions, polish
-docs/specs/phase-12-*.md         Phase 12: Packaging + distribution
-```
-
-### Windows Code Conventions
-
-These apply **only** to code in `clicky-windows/`. The macOS conventions above still
-apply to `leanring-buddy/`.
-
-- Follow the same **naming clarity** rules as the macOS section — long, descriptive names
-- Use `async`/`await` for all async operations; no `Task.Result` or `.Wait()` blocking calls
-- All UI updates must be dispatched via `DispatcherQueue.TryEnqueue` if called from a non-UI thread
-- Win32 P/Invoke declarations go at the **bottom** of the class that uses them, not in a separate file
-- Comments must explain **why**, especially for non-obvious Win32 extended style interactions
-- Do not use `WPF`, `Windows Forms`, or `Electron` — WinUI 3 only
-- Do not target Windows 10 — minimum is Windows 11 build 22000
-
-### Windows Do NOT
-
-- Do not modify `leanring-buddy/` or `.xcodeproj/` when working on the Windows port
-- Do not modify `worker/` — it is shared and already deployed
-- Do not run `xcodebuild` — same rule as macOS, breaks TCC permissions
-- Do not create a separate Cloudflare Worker for Windows — use the same Worker URL
 
 ---
 
-## Self-Update Instructions
+## Windows Architecture (Quick Reference)
 
-<!-- AI agents: follow these instructions to keep this file accurate. -->
+| Layer | Technology |
+|---|---|
+| Language | C# / .NET 8 |
+| UI | WinUI 3 (Windows App SDK 1.5+) |
+| Audio capture | NAudio 2.x `WaveInEvent` |
+| Audio playback | NAudio `WaveOutEvent` + MP3 |
+| HTTP / SSE | `HttpClient` |
+| WebSocket | `System.Net.WebSockets.ClientWebSocket` |
+| Screen capture | `Windows.Graphics.Capture` |
+| Global hotkey | Win32 `RegisterHotKey` + `SetWindowsHookEx` |
+| Overlay window | WinUI 3 + `WS_EX_TRANSPARENT` |
+| System tray | `H.NotifyIcon.WinUI` |
+| Analytics | PostHog .NET SDK |
 
-When you make changes to this project that affect the information in this file, update this file to reflect those changes. Specifically:
+### macOS → Windows API Cheat Sheet
 
-1. **New files**: Add new source files to the "Key Files" table with their purpose and approximate line count
-2. **Deleted files**: Remove entries for files that no longer exist
-3. **Architecture changes**: Update the architecture section if you introduce new patterns, frameworks, or significant structural changes
-4. **Build changes**: Update build commands if the build process changes
-5. **New conventions**: If the user establishes a new coding convention during a session, add it to the appropriate conventions section
-6. **Line count drift**: If a file's line count changes significantly (>50 lines), update the approximate count in the Key Files table
+| macOS | Windows |
+|---|---|
+| `NSStatusItem` | `H.NotifyIcon.WinUI` |
+| `NSPanel` borderless | WinUI 3 `Window` (no titlebar presenter) |
+| `CGEvent.tapCreate` | `RegisterHotKey` + `SetWindowsHookEx` |
+| `AVAudioEngine` + tap | `NAudio.WaveInEvent` |
+| `AVAudioPlayer` | `NAudio.WaveOutEvent` + `Mp3FileReader` |
+| `URLSession.webSocketTask` | `ClientWebSocket` |
+| `URLSession.bytes(for:)` SSE | `HttpClient.GetStreamAsync` + `StreamReader` |
+| `SCScreenshotManager` | `Windows.Graphics.Capture` |
+| `NSWindow` transparent overlay | WinUI 3 + `WS_EX_TRANSPARENT \| WS_EX_LAYERED` |
+| `UserDefaults` | `Windows.Storage.ApplicationData.Current.LocalSettings` |
+| `SMAppService` (login item) | Registry `HKCU\...\CurrentVersion\Run` |
+| `NSSpeechSynthesizer` | `System.Speech.Synthesis.SpeechSynthesizer` |
 
-Do NOT update this file for minor edits, bug fixes, or changes that don't affect the documented architecture or conventions.
+---
+
+## Windows Phase Roadmap
+
+| Phase | Spec File | Key Files Created |
+|---|---|---|
+| 00 | phase-00-project-scaffolding.md | `ClickyWindows.sln`, `App.xaml.cs` |
+| 01 | phase-01-tray-and-panel.md | `TrayIconManager.cs`, `CompanionPanelWindow.xaml`, `DesignSystem.cs` |
+| 02 | phase-02-global-hotkey.md | `GlobalHotkeyMonitor.cs`, `PushToTalkShortcut.cs` |
+| 03 | phase-03-microphone-capture.md | `PushToTalkManager.cs`, `PCM16AudioConverter.cs`, `AudioPowerLevelTracker.cs` |
+| 04 | phase-04-assemblyai-transcription.md | `AssemblyAIStreamingProvider.cs`, `ITranscriptionProvider.cs` |
+| 05 | phase-05-claude-api.md | `ClaudeApiClient.cs`, `PointTagParser.cs` |
+| 06 | phase-06-tts-playback.md | `TtsAudioPlayer.cs` |
+| 07 | phase-07-screen-capture.md | `ScreenCaptureUtility.cs`, `ScreenCaptureResult.cs` |
+| 08 | phase-08-state-machine.md | `CompanionManager.cs` (complete), `CompanionVoiceState.cs` |
+| 09 | phase-09-overlay-window.md | `OverlayWindow.cs`, `OverlayCanvas.cs` |
+| 10 | phase-10-cursor-flight.md | `BezierFlightAnimator.cs` |
+| 11 | phase-11-analytics-polish.md | `ClickyAnalytics.cs`, `PermissionsManager.cs` |
+| 12 | phase-12-packaging.md | `Package.appxmanifest`, `clicky-setup.iss` |
+
+---
+
+## Cloudflare Worker (Shared — Never Modify)
+
+All API calls go through `worker/src/index.ts`. The Windows app uses the same Worker URL as macOS.
+
+| Route | Upstream |
+|---|---|
+| `POST /chat` | Anthropic Claude (or Groq in DEV_MODE) |
+| `POST /tts` | ElevenLabs (or Groq in DEV_MODE) |
+| `POST /transcribe-token` | AssemblyAI temp token (or Groq key in DEV_MODE) |
+
+Set `CloudflareWorkerBaseUrl` in `Core/AppConfiguration.cs` before building.
+
+---
+
+## Self-Update Rule
+
+When a phase adds new files, update the Phase Roadmap table above and the Windows Architecture key files list. Do NOT update for minor bug fixes or line count drift.

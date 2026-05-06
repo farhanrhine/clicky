@@ -35,6 +35,12 @@
                        FontSize="12" Foreground="#ADB5B2"
                        TextWrapping="Wrap" />
 
+            <!-- Mic Status Row (Phase 03) -->
+            <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,8,0,0">
+                <TextBlock Text="Microphone:" FontSize="11" Foreground="#6B736F" />
+                <TextBlock x:Name="MicStatusText" Text="Checking..." FontSize="11" Foreground="#ADB5B2" />
+            </StackPanel>
+
             <!-- Footer -->
             <Rectangle Height="1" Fill="#373B39" Margin="0,12,0,8" />
             <Button x:Name="QuitButton" Content="Quit Clicky"
