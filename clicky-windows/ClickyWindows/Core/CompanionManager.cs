@@ -5,6 +5,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text;
+using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ClickyWindows;
@@ -16,6 +19,8 @@ internal class CompanionManager
     private readonly ITranscriptionProvider _transcriptionProvider
         = new AssemblyAIStreamingProvider();
     private ITranscriptionSession? _activeTranscriptionSession;
+    private readonly List<ClaudeConversationMessage> _conversationHistory = new();
+    private CancellationTokenSource? _activeClaudeCancellationToken;
 
     public void Start()
     {
@@ -67,10 +72,57 @@ internal class CompanionManager
         }
     }
 
-    private void OnFinalTranscriptReady(string transcript)
+    private async void OnFinalTranscriptReady(string transcript)
     {
-        System.Diagnostics.Debug.WriteLine($"Final transcript: {transcript}");
-        // Phase 05+ sends this to Claude
+        if (string.IsNullOrWhiteSpace(transcript)) return;
+
+        // Phase 07 will provide real screenshots
+        IReadOnlyList<ClaudeImageAttachment>? screenshots = null;
+
+        var fullResponseBuilder = new StringBuilder();
+
+        // Cancel any existing Claude request
+        _activeClaudeCancellationToken?.Cancel();
+        _activeClaudeCancellationToken?.Dispose();
+        _activeClaudeCancellationToken = new CancellationTokenSource();
+
+        try
+        {
+            await foreach (var textChunk in ClaudeApiClient.StreamResponseAsync(
+                transcript, _conversationHistory, screenshots, 
+                cancellationToken: _activeClaudeCancellationToken.Token))
+            {
+                fullResponseBuilder.Append(textChunk);
+                // Phase 09+ will stream text to overlay UI here
+            }
+
+            var fullResponse = fullResponseBuilder.ToString();
+
+            // Store in history
+            _conversationHistory.Add(new ClaudeConversationMessage(
+                ClaudeMessageRole.User, transcript));
+            _conversationHistory.Add(new ClaudeConversationMessage(
+                ClaudeMessageRole.Assistant, fullResponse));
+
+            var pointTag = PointTagParser.ExtractFirstTag(fullResponse);
+            var displayText = PointTagParser.StripAllTags(fullResponse);
+
+            Debug.WriteLine($"Claude response: {displayText}");
+            if (pointTag != null)
+                Debug.WriteLine($"Point tag: {pointTag}");
+
+            // Phase 06+ will play TTS here
+            // Phase 09+ will display text in overlay here
+            // Phase 10+ will animate cursor to point tag here
+        }
+        catch (OperationCanceledException)
+        {
+            Debug.WriteLine("Claude request cancelled");
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Claude API error: {ex.Message}");
+        }
     }
 
     private static IReadOnlyList<string> BuildKeyterms() => new[]
