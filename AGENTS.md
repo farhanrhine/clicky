@@ -96,17 +96,47 @@ open leanring-buddy.xcodeproj
 cd worker
 npm install
 
-# Add secrets
+# ── Production secrets (paid APIs) ──────────────────────────────────────────
 npx wrangler secret put ANTHROPIC_API_KEY
 npx wrangler secret put ASSEMBLYAI_API_KEY
 npx wrangler secret put ELEVENLABS_API_KEY
 
+# ── Dev mode secrets (Groq — free tier) ─────────────────────────────────────
+npx wrangler secret put GROQ_API_KEY   # get from console.groq.com (free)
+
+# ── Toggle between dev and prod ──────────────────────────────────────────────
+npx wrangler secret put DEV_MODE       # type "true" → Groq, "false" → Claude etc.
+
 # Deploy
 npx wrangler deploy
 
-# Local dev (create worker/.dev.vars with your keys)
+# Local dev — create worker/.dev.vars with all keys:
 npx wrangler dev
 ```
+
+**`worker/.dev.vars`** (local only, never committed):
+```
+ANTHROPIC_API_KEY=sk-ant-...
+ASSEMBLYAI_API_KEY=...
+ELEVENLABS_API_KEY=...
+GROQ_API_KEY=gsk_...
+DEV_MODE=true
+```
+
+### Dev Mode (Groq Free Tier)
+
+Setting `DEV_MODE=true` in the Worker reroutes all three API calls through Groq.
+**Zero changes to the app** — the same Worker URL, same routes, same request format.
+
+| Route | Production (DEV_MODE=false) | Dev (DEV_MODE=true) |
+|---|---|---|
+| `POST /chat` | Anthropic Claude (paid) | Groq `llama-4-scout-17b-16e-instruct` (vision ✅) |
+| `POST /tts` | ElevenLabs (paid) | Groq `canopylabs/orpheus-v1-english` |
+| `POST /transcribe-token` | AssemblyAI temp token | Returns Groq API key directly |
+
+> **Note**: In dev mode, speech-to-text switches from AssemblyAI real-time streaming
+> to Groq Whisper **upload-based** (audio is buffered and uploaded on key release).
+> Partial live transcripts during hold are not shown — final transcript still works.
 
 ## Code Style & Conventions
 
@@ -150,6 +180,119 @@ IMPORTANT: Follow these naming rules strictly. Clarity is the top priority.
 - Branch naming: `feature/description` or `fix/description`
 - Commit messages: imperative mood, concise, explain the "why" not the "what"
 - Do not force-push to main
+
+---
+
+## Windows Port
+
+The Windows 11 port of Clicky lives at `clicky-windows/` in this same repo.
+It is a **separate project** from the macOS app — different language, different
+framework, same Cloudflare Worker backend.
+
+### Windows Architecture
+
+- **App Type**: System tray-only (`WS_EX_NOACTIVATE`), no main window, no taskbar entry
+- **Framework**: WinUI 3 (Windows App SDK 1.5) with Win32 P/Invoke for overlay and hotkey
+- **Pattern**: Event-driven with `CompanionManager` as the central state machine
+- **AI Chat**: Claude (Sonnet 4.6 default, Opus 4.6 optional) via same Cloudflare Worker — SSE streaming via `HttpClient`
+- **Speech-to-Text**: AssemblyAI real-time streaming (`u3-rt-pro` model) via `ClientWebSocket`
+- **Text-to-Speech**: ElevenLabs (`eleven_flash_v2_5`) via Worker proxy, played with NAudio. Falls back to Windows SAPI (`System.Speech`) if unavailable.
+- **Screen Capture**: `Windows.Graphics.Capture` — GPU-accelerated, multi-monitor
+- **Voice Input**: Push-to-talk via NAudio `WaveInEvent`. System-wide hotkey: **Ctrl+Alt** (equivalent of macOS Ctrl+Option). Detected via `RegisterHotKey` (press) + `SetWindowsHookEx` (release).
+- **Element Pointing**: Same `[POINT:x,y:label:screenN]` tag protocol as macOS. `PointTagParser.cs` extracts coordinates, `BezierFlightAnimator.cs` animates the cursor along a quadratic bezier arc.
+- **Concurrency**: `async`/`await` throughout, UI updates via `DispatcherQueue`
+- **Analytics**: PostHog .NET SDK — same event names as macOS so both platforms share one dashboard
+
+### Windows Key Files
+
+| File | Purpose |
+|------|---------|
+| `clicky-windows/ClickyWindows/Core/CompanionManager.cs` | Central state machine. Owns the full pipeline: hotkey → mic → ASR → screenshot → Claude → TTS → overlay → pointing. Port of `CompanionManager.swift`. |
+| `clicky-windows/ClickyWindows/Core/AppConfiguration.cs` | Cloudflare Worker URL + model defaults. **Set `CloudflareWorkerBaseUrl` here before building.** |
+| `clicky-windows/ClickyWindows/Core/CompanionVoiceState.cs` | `enum` with four states: `Idle`, `Listening`, `Processing`, `Responding`. |
+| `clicky-windows/ClickyWindows/Input/GlobalHotkeyMonitor.cs` | Win32 `RegisterHotKey` + `SetWindowsHookEx` for system-wide Ctrl+Alt detection. Port of `GlobalPushToTalkShortcutMonitor.swift`. |
+| `clicky-windows/ClickyWindows/Audio/PushToTalkManager.cs` | NAudio `WaveInEvent` mic capture → 16kHz PCM16 mono chunks. Port of `BuddyDictationManager.swift`'s audio section. |
+| `clicky-windows/ClickyWindows/Audio/PCM16AudioConverter.cs` | Resamples mic input to 16kHz PCM16 mono via `MediaFoundationResampler`. Port of `BuddyAudioConversionSupport.swift`. |
+| `clicky-windows/ClickyWindows/Audio/TtsAudioPlayer.cs` | Fetches MP3 from Worker `/tts`, plays via NAudio `WaveOutEvent`. Falls back to SAPI. Port of `ElevenLabsTTSClient.swift`. |
+| `clicky-windows/ClickyWindows/Transcription/AssemblyAIStreamingProvider.cs` | Fetches temp token from Worker, opens AssemblyAI v3 WebSocket, streams PCM16, delivers final transcript. Port of `AssemblyAIStreamingTranscriptionProvider.swift`. |
+| `clicky-windows/ClickyWindows/AI/ClaudeApiClient.cs` | POST to Worker `/chat`, reads SSE stream, yields text chunks. Port of `ClaudeAPI.swift`. |
+| `clicky-windows/ClickyWindows/AI/PointTagParser.cs` | Regex parser for `[POINT:x,y:label:screenN]` tags. Strips tags from display/TTS text. |
+| `clicky-windows/ClickyWindows/Screen/ScreenCaptureUtility.cs` | `Windows.Graphics.Capture` multi-monitor capture. Sorted cursor-screen-first. Port of `CompanionScreenCaptureUtility.swift`. |
+| `clicky-windows/ClickyWindows/Overlay/OverlayWindow.cs` | Full-screen transparent `WS_EX_TRANSPARENT \| WS_EX_LAYERED \| WS_EX_TOPMOST` WinUI 3 window. Port of `OverlayWindow.swift`. |
+| `clicky-windows/ClickyWindows/Overlay/BezierFlightAnimator.cs` | Quadratic bezier arc cursor flight at 60fps. Dwell at target, return flight. Port of the pointing animation in `OverlayWindow.swift`. |
+| `clicky-windows/ClickyWindows/Panel/TrayIconManager.cs` | `H.NotifyIcon.WinUI` tray icon + click handler. Port of `MenuBarPanelManager.swift`. |
+| `clicky-windows/ClickyWindows/Panel/CompanionPanelWindow.xaml` | Borderless dark floating panel. Shows status, hotkey hint, permissions, model picker, quit. Port of `CompanionPanelView.swift`. |
+| `clicky-windows/ClickyWindows/Styles/DesignSystem.cs` | Exact same color hex values and spacing as `DesignSystem.swift`. |
+| `clicky-windows/ClickyWindows/Analytics/ClickyAnalytics.cs` | PostHog .NET SDK wrapper. Same event names as `ClickyAnalytics.swift`. |
+| `clicky-windows/installer/clicky-setup.iss` | Inno Setup installer script for direct download distribution. |
+
+### Windows Build & Run
+
+```powershell
+# Open in Visual Studio 2022 (requires Windows App SDK workload)
+start clicky-windows\ClickyWindows.sln
+
+# Set the Worker URL first:
+# Edit clicky-windows\ClickyWindows\Core\AppConfiguration.cs
+# Set CloudflareWorkerBaseUrl to your deployed Worker URL
+
+# Run: press Ctrl+F5 in Visual Studio (Debug | x64)
+# The app appears in the system tray — no window.
+```
+
+**Do NOT use `dotnet run`** for the main app — it doesn't handle WinUI 3 packaging
+correctly. Always run from Visual Studio or a published build.
+
+```powershell
+# Build a self-contained release for distribution
+dotnet publish clicky-windows\ClickyWindows -c Release -r win-x64 --self-contained true
+
+# Then compile the installer in Inno Setup:
+# Open clicky-windows\installer\clicky-setup.iss → Build → Compile
+```
+
+### Windows Spec Files
+
+All implementation specs live at `docs/specs/`. Start with the index:
+
+```
+docs/specs/index.md              ← START HERE — overview, phase table, API cheat sheet
+docs/specs/phase-00-*.md         Phase 00: Project scaffolding
+docs/specs/phase-01-*.md         Phase 01: Tray + panel
+docs/specs/phase-02-*.md         Phase 02: Global hotkey
+docs/specs/phase-03-*.md         Phase 03: Microphone capture
+docs/specs/phase-04-*.md         Phase 04: AssemblyAI transcription
+docs/specs/phase-05-*.md         Phase 05: Claude API + SSE
+docs/specs/phase-06-*.md         Phase 06: ElevenLabs TTS
+docs/specs/phase-07-*.md         Phase 07: Screen capture
+docs/specs/phase-08-*.md         Phase 08: CompanionManager state machine
+docs/specs/phase-09-*.md         Phase 09: Overlay window + cursor
+docs/specs/phase-10-*.md         Phase 10: Bezier arc flight + pointing
+docs/specs/phase-11-*.md         Phase 11: Analytics, permissions, polish
+docs/specs/phase-12-*.md         Phase 12: Packaging + distribution
+```
+
+### Windows Code Conventions
+
+These apply **only** to code in `clicky-windows/`. The macOS conventions above still
+apply to `leanring-buddy/`.
+
+- Follow the same **naming clarity** rules as the macOS section — long, descriptive names
+- Use `async`/`await` for all async operations; no `Task.Result` or `.Wait()` blocking calls
+- All UI updates must be dispatched via `DispatcherQueue.TryEnqueue` if called from a non-UI thread
+- Win32 P/Invoke declarations go at the **bottom** of the class that uses them, not in a separate file
+- Comments must explain **why**, especially for non-obvious Win32 extended style interactions
+- Do not use `WPF`, `Windows Forms`, or `Electron` — WinUI 3 only
+- Do not target Windows 10 — minimum is Windows 11 build 22000
+
+### Windows Do NOT
+
+- Do not modify `leanring-buddy/` or `.xcodeproj/` when working on the Windows port
+- Do not modify `worker/` — it is shared and already deployed
+- Do not run `xcodebuild` — same rule as macOS, breaks TCC permissions
+- Do not create a separate Cloudflare Worker for Windows — use the same Worker URL
+
+---
 
 ## Self-Update Instructions
 
