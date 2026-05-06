@@ -12,9 +12,15 @@ namespace ClickyWindows;
 
 internal class TrayIconManager
 {
+    private readonly CompanionManager _companionManager;
     private TaskbarIcon? _taskbarIcon;
     private CompanionPanelWindow? _companionPanel;
     private bool _isPanelVisible = false;
+
+    public TrayIconManager(CompanionManager companionManager)
+    {
+        _companionManager = companionManager;
+    }
 
     public void Initialize()
     {
@@ -44,7 +50,7 @@ internal class TrayIconManager
 
     private void ShowPanel()
     {
-        _companionPanel ??= new CompanionPanelWindow();
+        _companionPanel ??= new CompanionPanelWindow(_companionManager);
         _companionPanel.OnDismissRequested += HidePanel;
 
         PositionPanelNearTrayIcon();

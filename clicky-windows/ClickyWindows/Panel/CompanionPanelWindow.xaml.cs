@@ -13,8 +13,11 @@ public sealed partial class CompanionPanelWindow : Window
 {
     public event Action? OnDismissRequested;
 
-    public CompanionPanelWindow()
+    private readonly CompanionManager _companionManager;
+
+    public CompanionPanelWindow(CompanionManager companionManager)
     {
+        _companionManager = companionManager;
         this.InitializeComponent();
         ConfigureWindowStyle();
         InstallClickOutsideHandler();

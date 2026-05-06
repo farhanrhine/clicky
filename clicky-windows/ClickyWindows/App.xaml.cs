@@ -24,7 +24,7 @@ public partial class App : Application
         _companionManager = new CompanionManager();
         _companionManager.Start();
 
-        _trayIconManager = new TrayIconManager();
+        _trayIconManager = new TrayIconManager(_companionManager);
         _trayIconManager.Initialize();
     }
 }
