@@ -149,7 +149,7 @@ start clicky-windows\ClickyWindows.sln
 | 07 | phase-07-screen-capture.md | `ScreenCaptureUtility.cs`, `ScreenCaptureResult.cs` |
 | 08 | phase-08-state-machine.md | `CompanionManager.cs` (complete), `CompanionVoiceState.cs` |
 | 09 | phase-09-overlay-window.md | `OverlayWindow.cs`, `OverlayCanvas.cs` |
-| 10 | phase-10-cursor-flight.md | `BezierFlightAnimator.cs` |
+| 10 | phase-10-cursor-flight.md | BezierFlightAnimator.cs, CursorFlightState.cs |
 | 11 | phase-11-analytics-polish.md | `ClickyAnalytics.cs`, `PermissionsManager.cs` |
 | 12 | phase-12-packaging.md | `Package.appxmanifest`, `clicky-setup.iss` |
 

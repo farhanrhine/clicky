@@ -20,6 +20,7 @@ internal class OverlayCanvas : Canvas
     private readonly TextBlock _responseTextBlock;
     private readonly StackPanel _waveformPanel;
     private readonly ProgressRing _spinner;
+    private readonly BezierFlightAnimator _flightAnimator = new();
 
     private System.Drawing.Point _targetCursorPosition;
     private CompanionVoiceState _voiceState = CompanionVoiceState.Idle;
@@ -91,12 +92,23 @@ internal class OverlayCanvas : Canvas
 
     private void OnAnimationFrame(object? sender, object e)
     {
-        // Move cursor elements to match the tracked mouse position
-        // The overlay window covers the full screen, so the canvas position
-        // equals the screen position directly.
-        double x = _targetCursorPosition.X;
-        double y = _targetCursorPosition.Y;
+        double x, y;
 
+        if (_flightAnimator.FlightState.Phase != CursorFlightPhase.Idle)
+        {
+            _flightAnimator.Tick(deltaSeconds: 1.0 / 60.0);
+            var flightPos = _flightAnimator.FlightState.CurrentPosition;
+            x = flightPos.X;
+            y = flightPos.Y;
+        }
+        else
+        {
+            // Not flying — follow mouse
+            x = _targetCursorPosition.X;
+            y = _targetCursorPosition.Y;
+        }
+
+        // Move cursor elements to match the tracked position (mouse or flight)
         Canvas.SetLeft(_cursorDot, x - CursorDotSize / 2);
         Canvas.SetTop(_cursorDot, y - CursorDotSize / 2);
         Canvas.SetLeft(_cursorGlow, x - CursorGlowSize / 2);
@@ -136,6 +148,11 @@ internal class OverlayCanvas : Canvas
 
     public void UpdateCursorPosition(System.Drawing.Point pos)
         => _targetCursorPosition = pos;
+
+    public void StartCursorFlight(System.Drawing.PointF start, System.Drawing.PointF target, string label)
+    {
+        _flightAnimator.StartFlight(start, target, label);
+    }
 
     public void UpdateResponseText(string text)
         => _responseTextBlock.Text = text;
