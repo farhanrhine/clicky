@@ -29,6 +29,9 @@ internal class OverlayManager
     public void UpdateCursorPosition(System.Drawing.Point pos)
         => _windows.ForEach(w => w.UpdateCursorPosition(pos));
 
+    public void StartCursorFlight(System.Drawing.PointF start, System.Drawing.PointF target, string label)
+        => _windows.ForEach(w => w.StartCursorFlight(start, target, label));
+
     public void AppendResponseText(string chunk)
         => _windows.ForEach(w => w.AppendResponseText(chunk));
 

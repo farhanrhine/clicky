@@ -93,6 +93,11 @@ internal class OverlayWindow
         _canvas?.UpdateCursorPosition(screenPosition);
     }
 
+    public void StartCursorFlight(System.Drawing.PointF start, System.Drawing.PointF target, string label)
+    {
+        _canvas?.StartCursorFlight(start, target, label);
+    }
+
     /// <summary>Called with each streaming response text chunk.</summary>
     public void AppendResponseText(string textChunk)
     {

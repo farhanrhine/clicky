@@ -24,6 +24,7 @@ internal class CompanionManager : IDisposable
     private ITranscriptionSession? _activeTranscriptionSession;
     private CancellationTokenSource _claudeCts = new();
     private readonly DispatcherTimer _cursorTrackingTimer = new();
+    private System.Drawing.Point _lastKnownCursorPosition;
 
     // Conversation history — last 10 exchanges (20 messages)
     private readonly List<ClaudeConversationMessage> _conversationHistory = new();
@@ -67,7 +68,8 @@ internal class CompanionManager : IDisposable
         {
             if (GetCursorPos(out var pt))
             {
-                _overlayManager.UpdateCursorPosition(new System.Drawing.Point(pt.X, pt.Y));
+                _lastKnownCursorPosition = new System.Drawing.Point(pt.X, pt.Y);
+                _overlayManager.UpdateCursorPosition(_lastKnownCursorPosition);
             }
         };
         _cursorTrackingTimer.Start();
@@ -233,6 +235,17 @@ internal class CompanionManager : IDisposable
 
         OnPointTagDetected?.Invoke(pointTag);
 
+        if (pointTag != null && screens.Count > 0)
+        {
+            var targetPosition = MapPointTagToScreenCoordinates(pointTag, screens);
+            var currentCursorPos = new System.Drawing.PointF(
+                _lastKnownCursorPosition.X,
+                _lastKnownCursorPosition.Y);
+
+            _overlayManager.StartCursorFlight(
+                currentCursorPos, targetPosition, pointTag.Label);
+        }
+
         // Speak the response
         _ = Task.Run(async () =>
         {
@@ -280,6 +293,22 @@ internal class CompanionManager : IDisposable
         "Clicky", "Claude", "Anthropic", "Windows", "OpenAI",
         "Visual Studio", "WinUI", "C#", "Microsoft"
     };
+
+    private System.Drawing.PointF MapPointTagToScreenCoordinates(
+        PointTag tag,
+        IReadOnlyList<ScreenCaptureResult> capturedScreens)
+    {
+        // Find the screen the tag refers to
+        int screenIndex = Math.Clamp(tag.ScreenIndex, 0, capturedScreens.Count - 1);
+        var screen = capturedScreens[screenIndex];
+
+        // The tag's x,y are fractions of the display (0.0–1.0)
+        // Convert to absolute virtual desktop coordinates
+        float screenX = screen.VirtualDesktopOrigin.X + (float)(tag.X * screen.WidthInPixels);
+        float screenY = screen.VirtualDesktopOrigin.Y + (float)(tag.Y * screen.HeightInPixels);
+
+        return new System.Drawing.PointF(screenX, screenY);
+    }
 
     public void SetSelectedModel(string modelId)
     {
