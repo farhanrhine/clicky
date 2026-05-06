@@ -144,7 +144,7 @@ start clicky-windows\ClickyWindows.sln
 | 02 | phase-02-global-hotkey.md | `GlobalHotkeyMonitor.cs`, `PushToTalkShortcut.cs` |
 | 03 | phase-03-microphone-capture.md | `PushToTalkManager.cs`, `PCM16AudioConverter.cs`, `AudioPowerLevelTracker.cs` |
 | 04 | phase-04-assemblyai-transcription.md | `AssemblyAIStreamingProvider.cs`, `ITranscriptionProvider.cs` |
-| 05 | phase-05-claude-api.md | `ClaudeApiClient.cs`, `PointTagParser.cs` |
+| 05 | phase-05-claude-api.md | `ClaudeApiClient.cs`, `PointTagParser.cs`, `ClaudeConversationMessage.cs` |
 | 06 | phase-06-tts-playback.md | `TtsAudioPlayer.cs` |
 | 07 | phase-07-screen-capture.md | `ScreenCaptureUtility.cs`, `ScreenCaptureResult.cs` |
 | 08 | phase-08-state-machine.md | `CompanionManager.cs` (complete), `CompanionVoiceState.cs` |
