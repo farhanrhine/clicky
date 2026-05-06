@@ -1,0 +1,46 @@
+<!-- Panel/CompanionPanelWindow.xaml -->
+<!-- Borderless dark panel that drops near the tray icon. Non-activating. -->
+<Window
+    x:Class="ClickyWindows.CompanionPanelWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Width="320" Background="#101211" CornerRadius="12">
+        <StackPanel Padding="16,14,16,12" Spacing="0">
+
+            <!-- Header row -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Orientation="Horizontal" Spacing="8" Grid.Column="0">
+                    <Ellipse Width="8" Height="8" Fill="#34D399" />
+                    <TextBlock Text="Clicky"
+                               FontSize="14" FontWeight="SemiBold"
+                               Foreground="#ECEEED" />
+                </StackPanel>
+
+                <TextBlock Grid.Column="1" Text="Active"
+                           FontSize="12" Foreground="#6B736F"
+                           VerticalAlignment="Center" />
+            </Grid>
+
+            <!-- Divider -->
+            <Rectangle Height="1" Fill="#373B39" Margin="0,12,0,12" />
+
+            <!-- Instructions -->
+            <TextBlock Text="Hold Ctrl + Alt to talk."
+                       FontSize="12" Foreground="#ADB5B2"
+                       TextWrapping="Wrap" />
+
+            <!-- Footer -->
+            <Rectangle Height="1" Fill="#373B39" Margin="0,12,0,8" />
+            <Button x:Name="QuitButton" Content="Quit Clicky"
+                    FontSize="12" Foreground="#6B736F"
+                    Background="Transparent" BorderThickness="0"
+                    Click="QuitButton_Click" />
+        </StackPanel>
+    </Grid>
+</Window>
