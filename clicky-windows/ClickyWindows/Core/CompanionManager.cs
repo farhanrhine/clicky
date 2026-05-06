@@ -3,12 +3,19 @@
 // full voice pipeline. Phase 02 wires up just the hotkey; other pipeline
 // components are added in later phases.
 
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
 namespace ClickyWindows;
 
 internal class CompanionManager
 {
     private readonly GlobalHotkeyMonitor _hotkeyMonitor = new();
     private readonly PushToTalkManager _pushToTalkManager = new();
+    private readonly ITranscriptionProvider _transcriptionProvider
+        = new AssemblyAIStreamingProvider();
+    private ITranscriptionSession? _activeTranscriptionSession;
 
     public void Start()
     {
@@ -21,28 +28,58 @@ internal class CompanionManager
     {
         _hotkeyMonitor.Dispose();
         _pushToTalkManager.Dispose();
+        _activeTranscriptionSession?.Dispose();
     }
 
-    private void HandleShortcutTransition(PushToTalkTransition transition)
+    private async void HandleShortcutTransition(PushToTalkTransition transition)
     {
         switch (transition)
         {
             case PushToTalkTransition.Pressed:
                 System.Diagnostics.Debug.WriteLine("Clicky: PTT pressed");
-                _pushToTalkManager.StartCapture(OnAudioChunkCaptured);
+                
+                // Cancel any existing session
+                _activeTranscriptionSession?.Cancel();
+                _activeTranscriptionSession?.Dispose();
+
+                try
+                {
+                    _activeTranscriptionSession = await _transcriptionProvider.StartSessionAsync(
+                        keyterms: BuildKeyterms(),
+                        onTranscriptUpdate: text => System.Diagnostics.Debug.WriteLine($"Transcript: {text}"),
+                        onFinalTranscriptReady: OnFinalTranscriptReady,
+                        onError: ex => System.Diagnostics.Debug.WriteLine($"ASR error: {ex.Message}"));
+
+                    _pushToTalkManager.StartCapture(chunk =>
+                        _activeTranscriptionSession?.AppendPCM16AudioChunk(chunk));
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Clicky: Failed to start transcription session: {ex.Message}");
+                }
                 break;
+
             case PushToTalkTransition.Released:
                 System.Diagnostics.Debug.WriteLine("Clicky: PTT released");
                 _pushToTalkManager.StopCapture();
-                // Phase 04+ will finalize transcript here
+                _activeTranscriptionSession?.RequestFinalTranscript();
                 break;
         }
     }
 
+    private void OnFinalTranscriptReady(string transcript)
+    {
+        System.Diagnostics.Debug.WriteLine($"Final transcript: {transcript}");
+        // Phase 05+ sends this to Claude
+    }
+
+    private static IReadOnlyList<string> BuildKeyterms() => new[]
+    {
+        "Clicky", "Claude", "Anthropic", "Windows", "OpenAI"
+    };
+
     private void OnAudioChunkCaptured(byte[] pcm16AudioChunk)
     {
-        // Phase 04+ will forward these chunks to AssemblyAI WebSocket
-        System.Diagnostics.Debug.WriteLine(
-            $"Clicky: audio chunk {pcm16AudioChunk.Length} bytes");
+        // Handled directly in HandleShortcutTransition via lambda
     }
 }
