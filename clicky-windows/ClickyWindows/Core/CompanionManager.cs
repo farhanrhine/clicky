@@ -1,18 +1,11 @@
-// Core/CompanionManager.cs
-// Central state machine. Owns the full voice pipeline:
-//   Idle → Listening (PTT pressed)
-//   Listening → Processing (PTT released, transcript ready)
-//   Processing → Responding (first Claude token arrives)
-//   Responding → Idle (TTS finishes)
-//
-// Port of CompanionManager.swift.
-
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.UI.Xaml;
+using System.Runtime.InteropServices;
 
 namespace ClickyWindows;
 
@@ -24,11 +17,13 @@ internal class CompanionManager : IDisposable
     private readonly TtsAudioPlayer _ttsPlayer = new();
     private readonly ITranscriptionProvider _transcriptionProvider
         = new AssemblyAIStreamingProvider();
+    private readonly OverlayManager _overlayManager = new();
 
     // ── State ────────────────────────────────────────────────────────────────
     private CompanionVoiceState _voiceState = CompanionVoiceState.Idle;
     private ITranscriptionSession? _activeTranscriptionSession;
     private CancellationTokenSource _claudeCts = new();
+    private readonly DispatcherTimer _cursorTrackingTimer = new();
 
     // Conversation history — last 10 exchanges (20 messages)
     private readonly List<ClaudeConversationMessage> _conversationHistory = new();
@@ -53,6 +48,30 @@ internal class CompanionManager : IDisposable
 
         _ttsPlayer.OnPlaybackCompleted += HandleTtsPlaybackCompleted;
 
+        // Initialize multi-monitor overlay
+        _overlayManager.Initialize();
+
+        // Wire overlay to our pipeline events
+        this.OnVoiceStateChanged += _overlayManager.UpdateVoiceState;
+        this.OnResponseTextChunk += _overlayManager.AppendResponseText;
+
+        // Audio power level for waveform visualization
+        _pushToTalkManager.PowerTracker.OnPowerLevelUpdated += (level, history) =>
+        {
+            _overlayManager.UpdateAudioPowerLevel(level);
+        };
+
+        // Cursor tracking loop (60fps)
+        _cursorTrackingTimer.Interval = TimeSpan.FromMilliseconds(16);
+        _cursorTrackingTimer.Tick += (_, _) =>
+        {
+            if (GetCursorPos(out var pt))
+            {
+                _overlayManager.UpdateCursorPosition(new System.Drawing.Point(pt.X, pt.Y));
+            }
+        };
+        _cursorTrackingTimer.Start();
+
         System.Diagnostics.Debug.WriteLine("Clicky: CompanionManager started");
     }
 
@@ -62,6 +81,7 @@ internal class CompanionManager : IDisposable
         _pushToTalkManager.Dispose();
         _ttsPlayer.Dispose();
         _claudeCts.Dispose();
+        _cursorTrackingTimer.Stop();
     }
 
     // ── Hotkey Events ────────────────────────────────────────────────────────
@@ -85,6 +105,7 @@ internal class CompanionManager : IDisposable
         _claudeCts.Cancel();
         _claudeCts = new CancellationTokenSource();
         _ttsPlayer.StopPlayback();
+        _overlayManager.ClearResponseText();
 
         SetVoiceState(CompanionVoiceState.Listening);
 
@@ -278,4 +299,10 @@ internal class CompanionManager : IDisposable
         _hotkeyMonitor.Dispose();
         _claudeCts.Dispose();
     }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT pt);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X, Y; }
 }
