@@ -20,6 +20,7 @@
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="H.NotifyIcon.WinUI" Version="2.1.0" />
     <PackageReference Include="PostHog" Version="1.0.0" />
+    <PackageReference Include="System.Speech" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>
