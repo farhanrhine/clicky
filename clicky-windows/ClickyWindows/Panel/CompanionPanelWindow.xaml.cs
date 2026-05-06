@@ -1,7 +1,9 @@
 // Panel/CompanionPanelWindow.xaml.cs
 
+using System;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Windowing;
+using System.Threading.Tasks;
 using System.Runtime.InteropServices;
 using WinRT.Interop;
 
@@ -16,6 +18,29 @@ public sealed partial class CompanionPanelWindow : Window
         this.InitializeComponent();
         ConfigureWindowStyle();
         InstallClickOutsideHandler();
+        _ = CheckMicPermissionAsync();
+    }
+
+    private async Task CheckMicPermissionAsync()
+    {
+        try
+        {
+            var micStatus = await Windows.Media.Capture
+                .MediaCapture.RequestUserMediaPermissionAsync(
+                    Windows.Media.Capture.StreamingCaptureMode.Audio);
+            
+            this.DispatcherQueue.TryEnqueue(() => {
+                MicStatusText.Text = "Allowed";
+                MicStatusText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 52, 211, 153)); // Success color
+            });
+        }
+        catch
+        {
+            this.DispatcherQueue.TryEnqueue(() => {
+                MicStatusText.Text = "Denied/Error";
+                MicStatusText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77)); // Destructive color
+            });
+        }
     }
 
     private void ConfigureWindowStyle()
