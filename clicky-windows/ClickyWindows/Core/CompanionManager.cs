@@ -1,34 +1,58 @@
 // Core/CompanionManager.cs
-// Central state machine for Clicky. Receives hotkey events and drives the
-// full voice pipeline. Phase 02 wires up just the hotkey; other pipeline
-// components are added in later phases.
+// Central state machine. Owns the full voice pipeline:
+//   Idle → Listening (PTT pressed)
+//   Listening → Processing (PTT released, transcript ready)
+//   Processing → Responding (first Claude token arrives)
+//   Responding → Idle (TTS finishes)
+//
+// Port of CompanionManager.swift.
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace ClickyWindows;
 
-internal class CompanionManager
+internal class CompanionManager : IDisposable
 {
+    // ── Components ───────────────────────────────────────────────────────────
     private readonly GlobalHotkeyMonitor _hotkeyMonitor = new();
     private readonly PushToTalkManager _pushToTalkManager = new();
+    private readonly TtsAudioPlayer _ttsPlayer = new();
     private readonly ITranscriptionProvider _transcriptionProvider
         = new AssemblyAIStreamingProvider();
+
+    // ── State ────────────────────────────────────────────────────────────────
+    private CompanionVoiceState _voiceState = CompanionVoiceState.Idle;
     private ITranscriptionSession? _activeTranscriptionSession;
-    private readonly TtsAudioPlayer _ttsPlayer = new();
+    private CancellationTokenSource _claudeCts = new();
+
+    // Conversation history — last 10 exchanges (20 messages)
     private readonly List<ClaudeConversationMessage> _conversationHistory = new();
-    private CancellationTokenSource? _activeClaudeCancellationToken;
+    private const int MaxConversationHistoryMessages = 20;
+
+    // Model selection — persisted across launches
+    private string _selectedModel = AppConfiguration.DefaultClaudeModel;
+
+    // ── Public State Change Events (consumed by overlay/panel UI) ───────────
+    public event Action<CompanionVoiceState>? OnVoiceStateChanged;
+    public event Action<string>? OnTranscriptUpdated;       // live transcript
+    public event Action<string>? OnResponseTextChunk;       // streaming response
+    public event Action<PointTag?>? OnPointTagDetected;     // cursor pointing
+    public event Action? OnResponseCompleted;               // TTS done
+
+    // ── Startup / Shutdown ───────────────────────────────────────────────────
 
     public void Start()
     {
         _hotkeyMonitor.OnShortcutTransition += HandleShortcutTransition;
         _hotkeyMonitor.Start();
-        _ttsPlayer.OnPlaybackCompleted += OnTtsPlaybackCompleted;
+
+        _ttsPlayer.OnPlaybackCompleted += HandleTtsPlaybackCompleted;
+
         System.Diagnostics.Debug.WriteLine("Clicky: CompanionManager started");
     }
 
@@ -36,131 +60,222 @@ internal class CompanionManager
     {
         _hotkeyMonitor.Dispose();
         _pushToTalkManager.Dispose();
-        _activeTranscriptionSession?.Dispose();
         _ttsPlayer.Dispose();
+        _claudeCts.Dispose();
     }
 
-    private async void HandleShortcutTransition(PushToTalkTransition transition)
+    // ── Hotkey Events ────────────────────────────────────────────────────────
+
+    private void HandleShortcutTransition(PushToTalkTransition transition)
     {
         switch (transition)
         {
             case PushToTalkTransition.Pressed:
-                System.Diagnostics.Debug.WriteLine("Clicky: PTT pressed");
-                
-                // Cancel any existing session and stop TTS
-                _activeTranscriptionSession?.Cancel();
-                _activeTranscriptionSession?.Dispose();
-                _ttsPlayer.StopPlayback();
-
-                try
-                {
-                    _activeTranscriptionSession = await _transcriptionProvider.StartSessionAsync(
-                        keyterms: BuildKeyterms(),
-                        onTranscriptUpdate: text => System.Diagnostics.Debug.WriteLine($"Transcript: {text}"),
-                        onFinalTranscriptReady: OnFinalTranscriptReady,
-                        onError: ex => System.Diagnostics.Debug.WriteLine($"ASR error: {ex.Message}"));
-
-                    _pushToTalkManager.StartCapture(chunk =>
-                        _activeTranscriptionSession?.AppendPCM16AudioChunk(chunk));
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Clicky: Failed to start transcription session: {ex.Message}");
-                }
+                HandlePushToTalkPressed();
                 break;
-
             case PushToTalkTransition.Released:
-                System.Diagnostics.Debug.WriteLine("Clicky: PTT released");
-                _pushToTalkManager.StopCapture();
-                _activeTranscriptionSession?.RequestFinalTranscript();
+                HandlePushToTalkReleased();
                 break;
         }
     }
 
-    private async void OnFinalTranscriptReady(string transcript)
+    private void HandlePushToTalkPressed()
     {
-        if (string.IsNullOrWhiteSpace(transcript)) return;
+        // Cancel any in-progress Claude response
+        _claudeCts.Cancel();
+        _claudeCts = new CancellationTokenSource();
+        _ttsPlayer.StopPlayback();
 
-        // Capture all monitors
-        var capturedScreens = await ScreenCaptureUtility.CaptureAllScreensAsync();
-        
-        var screenshots = capturedScreens.Select(screen =>
-            new ClaudeImageAttachment(
-                Base64Data: Convert.ToBase64String(screen.JpegBytes),
-                MediaType: "image/jpeg"
-            )).ToList();
+        SetVoiceState(CompanionVoiceState.Listening);
 
-        var fullResponseBuilder = new StringBuilder();
+        _ = StartListeningSessionAsync();
+    }
 
-        // Cancel any existing Claude request
-        _activeClaudeCancellationToken?.Cancel();
-        _activeClaudeCancellationToken?.Dispose();
-        _activeClaudeCancellationToken = new CancellationTokenSource();
+    private async Task StartListeningSessionAsync()
+    {
+        try
+        {
+            _activeTranscriptionSession = await _transcriptionProvider
+                .StartSessionAsync(
+                    keyterms: BuildKeyterms(),
+                    onTranscriptUpdate: text =>
+                    {
+                        OnTranscriptUpdated?.Invoke(text);
+                    },
+                    onFinalTranscriptReady: OnFinalTranscriptReady,
+                    onError: OnTranscriptionError);
+
+            _pushToTalkManager.StartCapture(
+                chunk => _activeTranscriptionSession?.AppendPCM16AudioChunk(chunk));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"Clicky: failed to start listening: {ex.Message}");
+            SetVoiceState(CompanionVoiceState.Idle);
+        }
+    }
+
+    private void HandlePushToTalkReleased()
+    {
+        if (_voiceState != CompanionVoiceState.Listening) return;
+
+        _pushToTalkManager.StopCapture();
+        _activeTranscriptionSession?.RequestFinalTranscript();
+
+        SetVoiceState(CompanionVoiceState.Processing);
+    }
+
+    // ── Transcript → Claude Pipeline ─────────────────────────────────────────
+
+    private void OnFinalTranscriptReady(string transcript)
+    {
+        transcript = transcript.Trim();
+        if (string.IsNullOrEmpty(transcript))
+        {
+            SetVoiceState(CompanionVoiceState.Idle);
+            return;
+        }
+
+        _ = SendTranscriptToClaudeAsync(transcript, _claudeCts.Token);
+    }
+
+    private void OnTranscriptionError(Exception error)
+    {
+        System.Diagnostics.Debug.WriteLine(
+            $"Clicky: transcription error: {error.Message}");
+        SetVoiceState(CompanionVoiceState.Idle);
+    }
+
+    private async Task SendTranscriptToClaudeAsync(
+        string transcript, CancellationToken cancellationToken)
+    {
+        // Capture all screens before calling Claude
+        IReadOnlyList<ScreenCaptureResult> screens = Array.Empty<ScreenCaptureResult>();
+        try
+        {
+            screens = await ScreenCaptureUtility.CaptureAllScreensAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"Clicky: screen capture failed: {ex.Message}");
+        }
+
+        var screenshots = screens
+            .Select(s => new ClaudeImageAttachment(
+                Base64Data: Convert.ToBase64String(s.JpegBytes),
+                MediaType: "image/jpeg"))
+            .ToList();
+
+        var responseBuilder = new StringBuilder();
+        bool firstChunkReceived = false;
 
         try
         {
             await foreach (var textChunk in ClaudeApiClient.StreamResponseAsync(
-                transcript, _conversationHistory, screenshots, 
-                cancellationToken: _activeClaudeCancellationToken.Token))
+                transcript, _conversationHistory, screenshots,
+                _selectedModel, cancellationToken))
             {
-                fullResponseBuilder.Append(textChunk);
-                // Phase 09+ will stream text to overlay UI here
+                if (!firstChunkReceived)
+                {
+                    firstChunkReceived = true;
+                    SetVoiceState(CompanionVoiceState.Responding);
+                }
+
+                responseBuilder.Append(textChunk);
+                OnResponseTextChunk?.Invoke(textChunk);
             }
-
-            var fullResponse = fullResponseBuilder.ToString();
-
-            // Store in history
-            _conversationHistory.Add(new ClaudeConversationMessage(
-                ClaudeMessageRole.User, transcript));
-            _conversationHistory.Add(new ClaudeConversationMessage(
-                ClaudeMessageRole.Assistant, fullResponse));
-
-            var pointTag = PointTagParser.ExtractFirstTag(fullResponse);
-            var displayText = PointTagParser.StripAllTags(fullResponse);
-
-            Debug.WriteLine($"Claude response: {displayText}");
-            if (pointTag != null)
-                Debug.WriteLine($"Point tag: {pointTag}");
-
-            // Play TTS (don't await — let it play in background while overlay shows text)
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await _ttsPlayer.SpeakAsync(displayText, CancellationToken.None);
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"TTS failed: {ex.Message}");
-                }
-            });
-
-            // Phase 09+ will display text in overlay here
-            // Phase 10+ will animate cursor to point tag here
         }
         catch (OperationCanceledException)
         {
-            Debug.WriteLine("Claude request cancelled");
+            return; // Cancelled by new PTT press
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"Claude API error: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"Clicky: Claude error: {ex.Message}");
+            SetVoiceState(CompanionVoiceState.Idle);
+            return;
+        }
+
+        string fullResponse = responseBuilder.ToString();
+
+        // Store exchange in conversation history
+        AddToConversationHistory(
+            new ClaudeConversationMessage(ClaudeMessageRole.User, transcript));
+        AddToConversationHistory(
+            new ClaudeConversationMessage(ClaudeMessageRole.Assistant, fullResponse));
+
+        // Parse pointing tag
+        var pointTag = PointTagParser.ExtractFirstTag(fullResponse);
+        var displayText = PointTagParser.StripAllTags(fullResponse);
+
+        OnPointTagDetected?.Invoke(pointTag);
+
+        // Speak the response
+        _ = Task.Run(async () =>
+        {
+            try { await _ttsPlayer.SpeakAsync(displayText, cancellationToken); }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"TTS error: {ex.Message}");
+            }
+        }, cancellationToken);
+    }
+
+    // ── TTS Completion → Idle ────────────────────────────────────────────────
+
+    private void HandleTtsPlaybackCompleted()
+    {
+        // Only return to idle if we're still in responding state.
+        // A new PTT press may have already moved us to Listening.
+        if (_voiceState == CompanionVoiceState.Responding)
+        {
+            SetVoiceState(CompanionVoiceState.Idle);
+            OnResponseCompleted?.Invoke();
         }
     }
 
-    private void OnTtsPlaybackCompleted()
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private void SetVoiceState(CompanionVoiceState newState)
     {
-        Debug.WriteLine("TTS: playback complete");
-        // Phase 10+ will schedule cursor fade-out here
+        if (_voiceState == newState) return;
+        _voiceState = newState;
+        OnVoiceStateChanged?.Invoke(newState);
+        System.Diagnostics.Debug.WriteLine($"Clicky: voice state → {newState}");
+    }
+
+    private void AddToConversationHistory(ClaudeConversationMessage message)
+    {
+        _conversationHistory.Add(message);
+        // Trim to max window (10 exchanges = 20 messages)
+        while (_conversationHistory.Count > MaxConversationHistoryMessages)
+            _conversationHistory.RemoveAt(0);
     }
 
     private static IReadOnlyList<string> BuildKeyterms() => new[]
     {
-        "Clicky", "Claude", "Anthropic", "Windows", "OpenAI"
+        "Clicky", "Claude", "Anthropic", "Windows", "OpenAI",
+        "Visual Studio", "WinUI", "C#", "Microsoft"
     };
 
-    private void OnAudioChunkCaptured(byte[] pcm16AudioChunk)
+    public void SetSelectedModel(string modelId)
     {
-        // Handled directly in HandleShortcutTransition via lambda
+        _selectedModel = modelId;
+        // Persist to Windows app storage
+        Windows.Storage.ApplicationData.Current.LocalSettings
+            .Values["SelectedModel"] = modelId;
+    }
+
+    public string SelectedModel => _selectedModel;
+
+    public void Dispose()
+    {
+        Stop();
+        _ttsPlayer.Dispose();
+        _pushToTalkManager.Dispose();
+        _hotkeyMonitor.Dispose();
+        _claudeCts.Dispose();
     }
 }
