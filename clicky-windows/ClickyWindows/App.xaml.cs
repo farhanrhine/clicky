@@ -17,14 +17,37 @@ public partial class App : Application
         this.InitializeComponent();
     }
 
-    protected override void OnLaunched(LaunchActivatedEventArgs args)
+    protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
         // Do NOT create a MainWindow — Clicky is a tray-only app.
         // TrayIconManager owns the system tray icon and the floating panel.
+        ClickyAnalytics.Configure();
+
         _companionManager = new CompanionManager();
         _companionManager.Start();
 
         _trayIconManager = new TrayIconManager(_companionManager);
         _trayIconManager.Initialize();
+
+        // First launch detection & onboarding
+        bool isFirstLaunch = !Windows.Storage.ApplicationData.Current
+            .LocalSettings.Values.ContainsKey("HasCompletedOnboarding");
+
+        if (isFirstLaunch)
+        {
+            // Register for startup on first launch
+            StartupRegistration.RegisterForStartup();
+
+            // Show onboarding welcome in overlay
+            await System.Threading.Tasks.Task.Delay(1500); // Let the tray icon settle
+            _companionManager?.ShowOnboardingWelcome();
+
+            Windows.Storage.ApplicationData.Current.LocalSettings
+                .Values["HasCompletedOnboarding"] = true;
+
+            ClickyAnalytics.TrackOnboardingStarted();
+        }
+
+        ClickyAnalytics.TrackAppOpened();
     }
 }

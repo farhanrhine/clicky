@@ -26,24 +26,56 @@ public sealed partial class CompanionPanelWindow : Window
 
     private async Task CheckMicPermissionAsync()
     {
-        try
-        {
-            var micStatus = await Windows.Media.Capture
-                .MediaCapture.RequestUserMediaPermissionAsync(
-                    Windows.Media.Capture.StreamingCaptureMode.Audio);
-            
-            this.DispatcherQueue.TryEnqueue(() => {
+        bool hasMic = await PermissionsManager.RequestMicrophonePermissionAsync();
+        
+        this.DispatcherQueue.TryEnqueue(() => {
+            if (hasMic)
+            {
                 MicStatusText.Text = "Allowed";
-                MicStatusText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 52, 211, 153)); // Success color
-            });
-        }
-        catch
-        {
-            this.DispatcherQueue.TryEnqueue(() => {
-                MicStatusText.Text = "Denied/Error";
-                MicStatusText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77)); // Destructive color
-            });
-        }
+                MicStatusText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 52, 211, 153));
+                PermissionsSection.Visibility = Visibility.Collapsed;
+                ModelPickerRow.Visibility = Visibility.Visible;
+                UpdateModelSelectionUI();
+            }
+            else
+            {
+                MicStatusText.Text = "Denied";
+                MicStatusText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77));
+                MicGrantButton.Visibility = Visibility.Visible;
+            }
+        });
+    }
+
+    private void MicGrantButton_Click(object sender, RoutedEventArgs e)
+    {
+        _ = PermissionsManager.OpenMicrophoneSettingsAsync();
+    }
+
+    private void SonnetButton_Click(object sender, RoutedEventArgs e)
+    {
+        _companionManager.SetSelectedModel("claude-3-5-sonnet-20241022");
+        UpdateModelSelectionUI();
+    }
+
+    private void OpusButton_Click(object sender, RoutedEventArgs e)
+    {
+        _companionManager.SetSelectedModel("claude-3-opus-20240229");
+        UpdateModelSelectionUI();
+    }
+
+    private void UpdateModelSelectionUI()
+    {
+        bool isSonnet = _companionManager.SelectedModel.Contains("sonnet");
+        
+        SonnetButton.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+            isSonnet ? Windows.UI.Color.FromArgb(255, 39, 42, 41) : Windows.UI.Color.FromArgb(0, 0, 0, 0));
+        SonnetButton.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+            isSonnet ? Windows.UI.Color.FromArgb(255, 236, 238, 237) : Windows.UI.Color.FromArgb(255, 107, 115, 111));
+
+        OpusButton.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+            !isSonnet ? Windows.UI.Color.FromArgb(255, 39, 42, 41) : Windows.UI.Color.FromArgb(0, 0, 0, 0));
+        OpusButton.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+            !isSonnet ? Windows.UI.Color.FromArgb(255, 236, 238, 237) : Windows.UI.Color.FromArgb(255, 107, 115, 111));
     }
 
     private void ConfigureWindowStyle()

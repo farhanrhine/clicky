@@ -110,6 +110,7 @@ internal class CompanionManager : IDisposable
         _overlayManager.ClearResponseText();
 
         SetVoiceState(CompanionVoiceState.Listening);
+        ClickyAnalytics.TrackPushToTalkStarted();
 
         _ = StartListeningSessionAsync();
     }
@@ -145,6 +146,7 @@ internal class CompanionManager : IDisposable
 
         _pushToTalkManager.StopCapture();
         _activeTranscriptionSession?.RequestFinalTranscript();
+        ClickyAnalytics.TrackPushToTalkReleased();
 
         SetVoiceState(CompanionVoiceState.Processing);
     }
@@ -161,6 +163,7 @@ internal class CompanionManager : IDisposable
         }
 
         _ = SendTranscriptToClaudeAsync(transcript, _claudeCts.Token);
+        ClickyAnalytics.TrackUserMessageSent(transcript);
     }
 
     private void OnTranscriptionError(Exception error)
@@ -217,6 +220,7 @@ internal class CompanionManager : IDisposable
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"Clicky: Claude error: {ex.Message}");
+            ClickyAnalytics.TrackResponseError(ex.Message);
             SetVoiceState(CompanionVoiceState.Idle);
             return;
         }
@@ -228,6 +232,7 @@ internal class CompanionManager : IDisposable
             new ClaudeConversationMessage(ClaudeMessageRole.User, transcript));
         AddToConversationHistory(
             new ClaudeConversationMessage(ClaudeMessageRole.Assistant, fullResponse));
+        ClickyAnalytics.TrackAIResponseReceived(fullResponse);
 
         // Parse pointing tag
         var pointTag = PointTagParser.ExtractFirstTag(fullResponse);
@@ -244,6 +249,7 @@ internal class CompanionManager : IDisposable
 
             _overlayManager.StartCursorFlight(
                 currentCursorPos, targetPosition, pointTag.Label);
+            ClickyAnalytics.TrackElementPointed(pointTag.Label);
         }
 
         // Speak the response
@@ -253,6 +259,7 @@ internal class CompanionManager : IDisposable
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"TTS error: {ex.Message}");
+                ClickyAnalytics.TrackTtsError(ex.Message);
             }
         }, cancellationToken);
     }
@@ -308,6 +315,20 @@ internal class CompanionManager : IDisposable
         float screenY = screen.VirtualDesktopOrigin.Y + (float)(tag.Y * screen.HeightInPixels);
 
         return new System.Drawing.PointF(screenX, screenY);
+    }
+
+    public void ShowOnboardingWelcome()
+    {
+        // Display a welcome message in the overlay for 5 seconds
+        _overlayManager?.AppendResponseText(
+            "Hi! I'm Clicky. Hold Ctrl+Alt and ask me anything about what's on your screen.");
+
+        // Auto-dismiss after 5 seconds
+        _ = Task.Delay(TimeSpan.FromSeconds(5)).ContinueWith(_ =>
+        {
+            _overlayManager?.ClearResponseText();
+            ClickyAnalytics.TrackOnboardingCompleted();
+        });
     }
 
     public void SetSelectedModel(string modelId)

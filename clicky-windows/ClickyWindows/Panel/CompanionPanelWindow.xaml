@@ -41,6 +41,48 @@
                 <TextBlock x:Name="MicStatusText" Text="Checking..." FontSize="11" Foreground="#ADB5B2" />
             </StackPanel>
 
+            <!-- Permissions section (shown until all granted) -->
+            <StackPanel x:Name="PermissionsSection" Spacing="0">
+                <TextBlock Text="PERMISSIONS"
+                           FontSize="10" FontWeight="SemiBold"
+                           Foreground="#6B736F" Margin="0,12,0,6" />
+
+                <!-- Microphone row -->
+                <Grid x:Name="MicRow" Margin="0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Microphone"
+                               FontSize="13" FontWeight="Medium"
+                               Foreground="#ADB5B2" VerticalAlignment="Center" />
+                    <Button x:Name="MicGrantButton" Grid.Column="1"
+                            Content="Grant" Click="MicGrantButton_Click"
+                            Background="#2563eb" Foreground="White"
+                            CornerRadius="12" Padding="10,4" FontSize="11" />
+                </Grid>
+            </StackPanel>
+
+            <!-- Model picker (shown after permissions granted) -->
+            <Grid x:Name="ModelPickerRow" Margin="0,8" Visibility="Collapsed">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Model" FontSize="13" FontWeight="Medium"
+                           Foreground="#ADB5B2" VerticalAlignment="Center" />
+                <StackPanel Orientation="Horizontal" Grid.Column="1" Spacing="0">
+                    <Button x:Name="SonnetButton" Content="Sonnet"
+                            Click="SonnetButton_Click"
+                            Background="#272A29" Foreground="#ECEEED"
+                            CornerRadius="5,0,0,5" Padding="10,5" FontSize="11" />
+                    <Button x:Name="OpusButton" Content="Opus"
+                            Click="OpusButton_Click"
+                            Background="Transparent" Foreground="#6B736F"
+                            CornerRadius="0,5,5,0" Padding="10,5" FontSize="11" />
+                </StackPanel>
+            </Grid>
+
             <!-- Footer -->
             <Rectangle Height="1" Fill="#373B39" Margin="0,12,0,8" />
             <Button x:Name="QuitButton" Content="Quit Clicky"
