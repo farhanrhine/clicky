@@ -175,11 +175,44 @@ IMPORTANT: Follow these naming rules strictly. Clarity is the top priority.
 - Do not rename the project directory or scheme (the "leanring" typo is intentional/legacy)
 - Do not run `xcodebuild` from the terminal — it invalidates TCC permissions
 
-## Git Workflow
+## Feature Branch Workflow (Finlo) — Never Forget!
 
-- Branch naming: `feature/description` or `fix/description`
-- Commit messages: imperative mood, concise, explain the "why" not the "what"
-- Do not force-push to main
+**Complete step-by-step process for implementing a feature and merging to main:**
+
+```bash
+# 1️⃣ START: Pull latest from main
+git status
+git pull origin main
+
+# 2️⃣ CREATE: New feature branch (use step number + feature name)
+git checkout -b feature/<step_number>-<feature_name>
+# Example: git checkout -b feature/2-registration
+
+# 3️⃣ BUILD: Implement the feature
+# - Follow the spec from docs/specs/
+# - Test thoroughly before committing
+# - Build and run from Visual Studio or Xcode
+
+# 4️⃣ STAGE: Add all changes to git
+git add .
+
+# 5️⃣ COMMIT: Commit with detailed message + Claude co-author
+git commit -m $'brief subject (Step X)\n\n- Detail 1\n- Detail 2\n- Detail 3\n\nCo-Authored-By: Claude <claude@anthropic.com>'
+
+# 6️⃣ PUSH: Push feature branch to GitHub
+git push origin feature/<step_number>-<feature_name>
+
+# 7️⃣ CREATE: Pull request on GitHub (manual — creates merge request)
+
+# 8️⃣ MERGE: Merge PR on GitHub & delete remote branch
+
+# 9️⃣ SYNC: Switch back to main and clean up locally
+git checkout main
+git pull origin main
+git branch -D feature/<step_number>-<feature_name>  # Delete local branch
+
+# ✅ DONE: Ready for next feature
+```
 
 ---
 
