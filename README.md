@@ -159,4 +159,50 @@ CLAUDE.md                # Full architecture doc (agents read this)
 
 PRs welcome. If you're using Claude Code, it already knows the codebase — just tell it what you want to build and point it at `CLAUDE.md`.
 
+## Windows
+
+Clicky for Windows 11 — built with C# / .NET 8 / WinUI 3.
+
+### Requirements
+- Windows 11 (build 22000 or later)
+- Visual Studio 2022 17.8+ with the Windows App SDK workload
+
+### Running in Development
+```powershell
+cd clicky-windows
+# Open in Visual Studio
+start ClickyWindows.sln
+# Press Ctrl+F5 to run
+```
+
+### Configuration
+Before running, set your Cloudflare Worker URL in:
+`ClickyWindows/Core/AppConfiguration.cs`
+
+```csharp
+public const string CloudflareWorkerBaseUrl =
+    "https://your-worker.your-account.workers.dev";
+```
+
+### Building an Installer
+```powershell
+# Self-contained publish
+dotnet publish ClickyWindows -c Release -r win-x64 --self-contained true
+
+# Then open installer/clicky-setup.iss in Inno Setup and compile
+```
+
+### Key Files
+| File | Purpose |
+|------|---------|
+| `Core/CompanionManager.cs` | Central state machine (port of CompanionManager.swift) |
+| `Core/AppConfiguration.cs` | Worker URL + model defaults |
+| `Audio/PushToTalkManager.cs` | Microphone capture (NAudio) |
+| `Transcription/AssemblyAIStreamingProvider.cs` | Real-time transcription |
+| `AI/ClaudeApiClient.cs` | Claude API + SSE streaming |
+| `Audio/TtsAudioPlayer.cs` | ElevenLabs TTS playback |
+| `Screen/ScreenCaptureUtility.cs` | Multi-monitor capture |
+| `Overlay/OverlayWindow.cs` | Transparent always-on-top overlay |
+| `Overlay/BezierFlightAnimator.cs` | Cursor arc animation |
+
 Got feedback? DM me on X [@farzatv](https://x.com/farzatv).

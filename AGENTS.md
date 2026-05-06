@@ -115,6 +115,26 @@ start clicky-windows\ClickyWindows.sln
 | Overlay window | WinUI 3 + `WS_EX_TRANSPARENT` |
 | System tray | `H.NotifyIcon.WinUI` |
 | Analytics | PostHog .NET SDK |
+| Installer | MSIX + Inno Setup |
+
+---
+
+## Windows Key Files
+
+| File | Lines | Purpose |
+|---|---|---|
+| `clicky-windows/ClickyWindows/Core/CompanionManager.cs` | ~400 | Windows port of the central state machine. Owns hotkey, mic, ASR, Claude, TTS, screen capture, overlay lifecycle. |
+| `clicky-windows/ClickyWindows/Core/AppConfiguration.cs` | ~20 | Worker URL + model defaults for the Windows build. |
+| `clicky-windows/ClickyWindows/Audio/PushToTalkManager.cs` | ~70 | NAudio WaveInEvent mic capture. Port of BuddyDictationManager's AVAudioEngine section. |
+| `clicky-windows/ClickyWindows/Transcription/AssemblyAIStreamingProvider.cs` | ~200 | AssemblyAI v3 WebSocket streaming. Port of AssemblyAIStreamingTranscriptionProvider.swift. |
+| `clicky-windows/ClickyWindows/AI/ClaudeApiClient.cs` | ~120 | HTTP + SSE Claude client. Port of ClaudeAPI.swift. |
+| `clicky-windows/ClickyWindows/Audio/TtsAudioPlayer.cs` | ~80 | ElevenLabs TTS via NAudio. Port of ElevenLabsTTSClient.swift. |
+| `clicky-windows/ClickyWindows/Screen/ScreenCaptureUtility.cs` | ~150 | Windows.Graphics.Capture multi-monitor capture. Port of CompanionScreenCaptureUtility.swift. |
+| `clicky-windows/ClickyWindows/Overlay/OverlayWindow.cs` | ~100 | Transparent click-through WinUI 3 overlay. Port of OverlayWindow.swift. |
+| `clicky-windows/ClickyWindows/Overlay/BezierFlightAnimator.cs` | ~130 | Quadratic bezier arc cursor flight. Port of OverlayWindow.swift pointing animation. |
+| `clicky-windows/ClickyWindows/Styles/DesignSystem.cs` | ~70 | Same color tokens as DesignSystem.swift. |
+| `clicky-windows/ClickyWindows/Analytics/ClickyAnalytics.cs` | ~80 | PostHog events — same schema as macOS. |
+| `clicky-windows/installer/clicky-setup.iss` | ~50 | Inno Setup installer script. |
 
 ### macOS → Windows API Cheat Sheet
 
