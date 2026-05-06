@@ -288,9 +288,16 @@ dotnet publish clicky-windows\ClickyWindows -c Release -r win-x64 --self-contain
 # Open clicky-windows\installer\clicky-setup.iss → Build → Compile
 ```
 
-### Windows Spec Files
+### Mandatory Context Initialization (Per Phase)
 
-All implementation specs live at `docs/specs/`. Start with the index:
+To maintain architectural consistency and follow the spec-driven roadmap while minimizing token usage, AI agents MUST read these files in order at the start of **every new session** or **every new phase**:
+
+1.  **AGENTS.md** (this file) — Core rules, architecture, and Finlo workflow
+2.  **docs/specs/implementation_plan.md** — High-level technical plan and tech stack
+3.  **docs/specs/index.md** — Phase roadmap and cross-platform API mapping
+4.  **Target Phase Spec** (e.g., `docs/specs/phase-02-*.md`) — Specific implementation details
+
+### Windows Spec Files
 
 ```
 docs/specs/index.md              ← START HERE — overview, phase table, API cheat sheet

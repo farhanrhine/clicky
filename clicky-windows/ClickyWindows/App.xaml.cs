@@ -10,6 +10,7 @@ namespace ClickyWindows;
 public partial class App : Application
 {
     private TrayIconManager? _trayIconManager;
+    private CompanionManager? _companionManager;
 
     public App()
     {
@@ -20,6 +21,9 @@ public partial class App : Application
     {
         // Do NOT create a MainWindow — Clicky is a tray-only app.
         // TrayIconManager owns the system tray icon and the floating panel.
+        _companionManager = new CompanionManager();
+        _companionManager.Start();
+
         _trayIconManager = new TrayIconManager();
         _trayIconManager.Initialize();
     }
