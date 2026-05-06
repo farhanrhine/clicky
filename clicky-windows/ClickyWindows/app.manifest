@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <!-- Prevents the app from appearing in the taskbar -->
+      <disableWindowFiltering
+        xmlns="http://schemas.microsoft.com/SMI/2011/WindowsSettings">true
+      </disableWindowFiltering>
+    </windowsSettings>
+  </application>
+</assembly>
