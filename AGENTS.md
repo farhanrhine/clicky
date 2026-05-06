@@ -174,8 +174,12 @@ IMPORTANT: Follow these naming rules strictly. Clarity is the top priority.
 - Do not try to fix the known non-blocking warnings (Swift 6 concurrency, deprecated onChange)
 - Do not rename the project directory or scheme (the "leanring" typo is intentional/legacy)
 - Do not run `xcodebuild` from the terminal — it invalidates TCC permissions
+- Do not start a new phase/feature branch until the previous one is MERGED to main and synced locally
 
 ## Feature Branch Workflow (Finlo) — Never Forget!
+
+### ⚠️ MANDATORY RULE: No Skipping Merges
+You MUST NOT start a new phase or feature branch until the previous phase's branch has been successfully MERGED into `main` and you have synced locally. Failure to follow this sequence breaks the source of truth and is UNACCEPTABLE.
 
 **Complete step-by-step process for implementing a feature and merging to main:**
 
